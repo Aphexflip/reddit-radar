@@ -13,6 +13,10 @@ import {
 
 type RuntimeEnv = Env & { WRITE_TOKEN?: string };
 
+interface CloudflareSubtleCrypto extends SubtleCrypto {
+  timingSafeEqual(a: ArrayBuffer | ArrayBufferView, b: ArrayBuffer | ArrayBufferView): boolean;
+}
+
 function json(data: unknown, status = 200): Response {
   return Response.json(data, {
     status,
@@ -28,7 +32,7 @@ async function readJson<T>(request: Request): Promise<T> {
   if (Number.isFinite(length) && length > 2_000_000) {
     throw new Error("request body exceeds 2 MB limit");
   }
-  return request.json<T>();
+  return await request.json() as T;
 }
 
 async function timingSafeTokenMatch(provided: string, expected: string): Promise<boolean> {
@@ -37,7 +41,8 @@ async function timingSafeTokenMatch(provided: string, expected: string): Promise
     crypto.subtle.digest("SHA-256", encoder.encode(provided)),
     crypto.subtle.digest("SHA-256", encoder.encode(expected)),
   ]);
-  return crypto.subtle.timingSafeEqual(providedHash, expectedHash);
+  const subtle = crypto.subtle as CloudflareSubtleCrypto;
+  return subtle.timingSafeEqual(providedHash, expectedHash);
 }
 
 async function authorizeWrite(request: Request, env: RuntimeEnv): Promise<Response | null> {
