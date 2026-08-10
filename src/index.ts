@@ -5,7 +5,6 @@ import {
   generatePrediction,
   ingestEvent,
   listOpportunities,
-  proofSummary,
   recordOutcome,
   type GeneratePredictionInput,
   type IngestEventInput,
@@ -19,6 +18,7 @@ import {
 } from "./graph";
 import { collectDueOutcomes } from "./outcomes";
 import { executeTieredPaperPrediction } from "./paper";
+import { proofSummary } from "./proof";
 import { syncPulseTrends, type PulseSyncInput } from "./pulse";
 import { pollSecSubmissions, type SecPollInput } from "./sec";
 
