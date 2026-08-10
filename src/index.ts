@@ -1,0 +1,135 @@
+import { dashboardHtml } from "./dashboard";
+import {
+  executePaperPrediction,
+  generatePrediction,
+  ingestEvent,
+  listOpportunities,
+  proofSummary,
+  recordOutcome,
+  type GeneratePredictionInput,
+  type IngestEventInput,
+  type RecordOutcomeInput,
+} from "./engine";
+
+type RuntimeEnv = Env & { WRITE_TOKEN?: string };
+
+function json(data: unknown, status = 200): Response {
+  return Response.json(data, {
+    status,
+    headers: {
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+}
+
+async function readJson<T>(request: Request): Promise<T> {
+  const length = Number(request.headers.get("content-length") ?? "0");
+  if (Number.isFinite(length) && length > 2_000_000) {
+    throw new Error("request body exceeds 2 MB limit");
+  }
+  return request.json<T>();
+}
+
+async function timingSafeTokenMatch(provided: string, expected: string): Promise<boolean> {
+  const encoder = new TextEncoder();
+  const [providedHash, expectedHash] = await Promise.all([
+    crypto.subtle.digest("SHA-256", encoder.encode(provided)),
+    crypto.subtle.digest("SHA-256", encoder.encode(expected)),
+  ]);
+  return crypto.subtle.timingSafeEqual(providedHash, expectedHash);
+}
+
+async function authorizeWrite(request: Request, env: RuntimeEnv): Promise<Response | null> {
+  if (!env.WRITE_TOKEN) {
+    return json({ error: "WRITE_TOKEN secret is not configured; write endpoints are fail-closed" }, 503);
+  }
+  const header = request.headers.get("Authorization") ?? "";
+  const provided = header.startsWith("Bearer ") ? header.slice(7) : "";
+  const allowed = await timingSafeTokenMatch(provided, env.WRITE_TOKEN);
+  return allowed ? null : json({ error: "unauthorized" }, 401);
+}
+
+function isWriteMethod(method: string): boolean {
+  return method !== "GET" && method !== "HEAD" && method !== "OPTIONS";
+}
+
+export default {
+  async fetch(request: Request, env: RuntimeEnv): Promise<Response> {
+    const url = new URL(request.url);
+
+    try {
+      if (url.pathname === "/" && request.method === "GET") {
+        return new Response(dashboardHtml(), {
+          headers: {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
+          },
+        });
+      }
+
+      if (url.pathname === "/api/health" && request.method === "GET") {
+        const dbCheck = await env.DB.prepare("SELECT 1 AS ok").first<{ ok: number }>();
+        return json({
+          ok: dbCheck?.ok === 1,
+          system_version: env.SYSTEM_VERSION,
+          execution_mode: env.EXECUTION_MODE,
+          live_trading_enabled: false,
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      if (url.pathname === "/api/opportunities" && request.method === "GET") {
+        const limit = Number(url.searchParams.get("limit") ?? "25");
+        return json(await listOpportunities(env, Number.isFinite(limit) ? limit : 25));
+      }
+
+      if (url.pathname === "/api/proof" && request.method === "GET") {
+        return json(await proofSummary(env));
+      }
+
+      if (isWriteMethod(request.method) && url.pathname.startsWith("/api/")) {
+        const denied = await authorizeWrite(request, env);
+        if (denied) return denied;
+      }
+
+      if (url.pathname === "/api/events" && request.method === "POST") {
+        const input = await readJson<IngestEventInput>(request);
+        return json(await ingestEvent(env, input), 201);
+      }
+
+      if (url.pathname === "/api/predictions" && request.method === "POST") {
+        const input = await readJson<GeneratePredictionInput>(request);
+        return json(await generatePrediction(env, input), 201);
+      }
+
+      const paperMatch = url.pathname.match(/^\/api\/paper\/execute\/([^/]+)$/);
+      if (paperMatch && request.method === "POST") {
+        const predictionId = decodeURIComponent(paperMatch[1] ?? "");
+        if (!predictionId) return json({ error: "prediction id is required" }, 400);
+        return json(await executePaperPrediction(env, predictionId));
+      }
+
+      if (url.pathname === "/api/outcomes" && request.method === "POST") {
+        const input = await readJson<RecordOutcomeInput>(request);
+        return json(await recordOutcome(env, input), 201);
+      }
+
+      return json({ error: "not found" }, 404);
+    } catch (error) {
+      console.error(JSON.stringify({
+        level: "error",
+        event: "request_failed",
+        method: request.method,
+        path: url.pathname,
+        message: error instanceof Error ? error.message : String(error),
+      }));
+      return json({
+        error: "request failed",
+        detail: error instanceof Error ? error.message : "unknown error",
+      }, 400);
+    }
+  },
+} satisfies ExportedHandler<RuntimeEnv>;
