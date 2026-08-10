@@ -2,6 +2,9 @@ name: Deploy Paper System
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - agent/v01-options-intelligence-foundation
 
 permissions:
   contents: read
