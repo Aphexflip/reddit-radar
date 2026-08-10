@@ -1,0 +1,177 @@
+name: Pre-Market Readiness
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/v01-options-intelligence-foundation
+    paths:
+      - .github/workflows/pre-market-readiness.yml
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      BASE_URL: https://reddit-radar-options-intelligence.aphexflip.workers.dev
+      WRITE_TOKEN: ${{ secrets.WRITE_TOKEN }}
+      ALPACA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+      ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      SCRIPT_NAME: reddit-radar-options-intelligence
+      EXPECTED_CRON: "*/15 13-22 * * 1-5"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify deployed Worker safety and credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS "$BASE_URL/api/health" -o health.json
+          cat health.json
+          echo
+          node - <<'NODE'
+          const fs = require('fs');
+          const h = JSON.parse(fs.readFileSync('health.json','utf8'));
+          if (!h.ok) throw new Error('Worker health is not OK');
+          if (h.execution_mode !== 'paper') throw new Error('EXECUTION_MODE is not paper');
+          if (h.live_trading_enabled !== false) throw new Error('live trading is unexpectedly enabled');
+          if (!h.alpaca_configured) throw new Error('Alpaca credentials are not configured');
+          if (!h.autonomous_paper_cycle_ready) throw new Error('autonomous paper cycle is not ready');
+          console.log('Worker health/safety: PASS');
+          NODE
+
+      - name: Verify deployed Cloudflare cron trigger
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          curl -fsS \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT_NAME/schedules" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -o schedules.json
+          cat schedules.json
+          echo
+          node - <<'NODE'
+          const fs = require('fs');
+          const p = JSON.parse(fs.readFileSync('schedules.json','utf8'));
+          if (!p.success) throw new Error('Cloudflare schedules API did not return success');
+          const schedules = Array.isArray(p.result?.schedules) ? p.result.schedules : [];
+          const expected = process.env.EXPECTED_CRON;
+          if (!schedules.some(s => s.cron === expected)) {
+            throw new Error(`expected cron ${expected} is not installed`);
+          }
+          console.log(`Cloudflare cron installed: ${expected}`);
+          NODE
+
+      - name: Verify Alpaca market clock and next session
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$ALPACA_API_KEY_ID"
+          test -n "$ALPACA_API_SECRET_KEY"
+          curl -fsS "https://paper-api.alpaca.markets/v2/clock" \
+            -H "APCA-API-KEY-ID: $ALPACA_API_KEY_ID" \
+            -H "APCA-API-SECRET-KEY: $ALPACA_API_SECRET_KEY" \
+            -H "Accept: application/json" \
+            -o clock.json
+          cat clock.json
+          echo
+          node - <<'NODE'
+          const fs = require('fs');
+          const c = JSON.parse(fs.readFileSync('clock.json','utf8'));
+          if (typeof c.is_open !== 'boolean') throw new Error('Alpaca clock lacks is_open');
+          const nextOpen = Date.parse(c.next_open);
+          const nextClose = Date.parse(c.next_close);
+          if (!Number.isFinite(nextOpen) || !Number.isFinite(nextClose)) {
+            throw new Error('Alpaca clock lacks parseable next_open/next_close');
+          }
+          if (nextClose <= nextOpen && !c.is_open) {
+            throw new Error('Alpaca next_close is not after next_open');
+          }
+          console.log(JSON.stringify({
+            is_open: c.is_open,
+            timestamp: c.timestamp,
+            next_open: c.next_open,
+            next_close: c.next_close
+          }, null, 2));
+          NODE
+
+      - name: Verify fresh Reddit Pulse database activity
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.120.1 d1 execute redditpulse-db --remote \
+            --command "SELECT MAX(created_utc) AS latest_comment_utc, SUM(CASE WHEN created_utc >= unixepoch() - 3600 THEN 1 ELSE 0 END) AS comments_last_hour FROM comments; SELECT COUNT(*) AS mentions_last_hour FROM mentions m JOIN comments c ON c.id = m.comment_id WHERE c.created_utc >= unixepoch() - 3600;" \
+            --json > pulse-freshness.json
+          cat pulse-freshness.json
+          echo
+          node - <<'NODE'
+          const fs = require('fs');
+          const payload = JSON.parse(fs.readFileSync('pulse-freshness.json','utf8'));
+          const first = payload?.[0]?.results?.[0] ?? {};
+          const second = payload?.[1]?.results?.[0] ?? {};
+          const latest = Number(first.latest_comment_utc || 0);
+          const comments = Number(first.comments_last_hour || 0);
+          const mentions = Number(second.mentions_last_hour || 0);
+          const ageMinutes = latest ? (Date.now()/1000 - latest)/60 : Infinity;
+          console.log(JSON.stringify({ latest_comment_utc: latest, latest_comment_age_minutes: ageMinutes, comments_last_hour: comments, mentions_last_hour: mentions }, null, 2));
+          if (!latest || ageMinutes > 30) throw new Error(`Pulse latest comment is too old: ${ageMinutes.toFixed(1)} minutes`);
+          if (comments <= 0) throw new Error('Pulse has no comments from the last hour');
+          if (mentions <= 0) throw new Error('Pulse has no ticker mentions from the last hour');
+          NODE
+
+      - name: Verify production D1-first Pulse sync
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(curl -sS \
+            -X POST "$BASE_URL/api/pulse/sync" \
+            -H "Authorization: Bearer $WRITE_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data '{"hours":1,"limit":25}' \
+            -o pulse-sync.json \
+            -w '%{http_code}')"
+          cat pulse-sync.json
+          echo
+          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then exit 1; fi
+          node - <<'NODE'
+          const fs = require('fs');
+          const p = JSON.parse(fs.readFileSync('pulse-sync.json','utf8'));
+          if (p.source_mode !== 'd1') throw new Error(`Pulse sync is not using D1-first mode: ${p.source_mode}`);
+          if (!Array.isArray(p.results) || p.results.length === 0) throw new Error('Pulse sync produced no stock candidates');
+          console.log('Production Pulse D1 sync: PASS');
+          NODE
+
+      - name: Verify proof ledger is readable
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS "$BASE_URL/api/proof" -o proof.json
+          node - <<'NODE'
+          const fs = require('fs');
+          const p = JSON.parse(fs.readFileSync('proof.json','utf8'));
+          if (typeof p.prediction_count !== 'number') throw new Error('proof ledger response is malformed');
+          console.log(JSON.stringify({ prediction_count: p.prediction_count, evidence_level: p.evidence_level, pending_outcomes: p.outcome_targets?.pending }, null, 2));
+          NODE
+
+      - name: Report readiness
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          if [ "${{ job.status }}" = "success" ]; then
+            gh issue comment 1 --repo "$GITHUB_REPOSITORY" --body "✅ PRE-MARKET READINESS PASSED — production Worker safety, deployed Cloudflare cron, Alpaca market clock, fresh Pulse comments/mentions, D1-first candidate sync, and proof ledger all verified. No paper execution endpoint was called. Run: ${RUN_URL}"
+          else
+            gh issue comment 1 --repo "$GITHUB_REPOSITORY" --body "❌ PRE-MARKET READINESS FAILED — at least one production dependency needs attention before the next session. No paper execution endpoint was called. Run: ${RUN_URL}"
+          fi
