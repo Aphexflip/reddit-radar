@@ -11,6 +11,12 @@ import {
   type IngestEventInput,
   type RecordOutcomeInput,
 } from "./engine";
+import {
+  expandImpactGraph,
+  upsertRelationship,
+  type ExpandGraphInput,
+  type UpsertRelationshipInput,
+} from "./graph";
 import { pollSecSubmissions, type SecPollInput } from "./sec";
 
 type RuntimeEnv = Env & {
@@ -121,6 +127,16 @@ export default {
       if (url.pathname === "/api/sec/poll" && request.method === "POST") {
         const input = await readJson<SecPollInput>(request);
         return json(await pollSecSubmissions(env, input));
+      }
+
+      if (url.pathname === "/api/graph/relationship" && request.method === "POST") {
+        const input = await readJson<UpsertRelationshipInput>(request);
+        return json(await upsertRelationship(env, input), 201);
+      }
+
+      if (url.pathname === "/api/graph/expand" && request.method === "POST") {
+        const input = await readJson<ExpandGraphInput>(request);
+        return json(await expandImpactGraph(env, input));
       }
 
       if (url.pathname === "/api/alpaca/predict" && request.method === "POST") {
