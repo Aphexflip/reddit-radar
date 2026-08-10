@@ -20,6 +20,7 @@ import { collectDueOutcomes } from "./outcomes";
 import { executeTieredPaperPrediction } from "./paper";
 import { proofSummary } from "./proof";
 import { syncPulseTrends, type PulseSyncInput } from "./pulse";
+import { runScheduledPaperTick } from "./scheduler";
 import { pollSecSubmissions, type SecPollInput } from "./sec";
 
 type RuntimeEnv = Env & {
@@ -202,5 +203,25 @@ export default {
         detail: error instanceof Error ? error.message : "unknown error",
       }, 400);
     }
+  },
+
+  async scheduled(_controller: ScheduledController, env: RuntimeEnv, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(
+      runScheduledPaperTick(env)
+        .then((summary) => {
+          console.log(JSON.stringify({
+            level: summary.errors.length ? "warn" : "info",
+            event: "scheduled_paper_tick",
+            ...summary,
+          }));
+        })
+        .catch((error) => {
+          console.error(JSON.stringify({
+            level: "error",
+            event: "scheduled_paper_tick_failed",
+            message: error instanceof Error ? error.message : String(error),
+          }));
+        }),
+    );
   },
 } satisfies ExportedHandler<RuntimeEnv>;
