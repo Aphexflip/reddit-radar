@@ -26,6 +26,16 @@ describe("scheduled paper entry gate", () => {
       next_close: "2026-08-10T20:00:00Z",
     }, Date.parse("2026-08-10T19:45:00Z"));
     expect(result.allowed).toBe(false);
-    expect(result.reason).toContain("less than 30 minutes");
+    expect(result.reason).toContain("30 minutes or less");
+  });
+
+  it("blocks the exact 30-minute boundary", () => {
+    expect(paperEntryGate({
+      is_open: true,
+      next_close: "2026-08-11T20:00:00Z",
+    }, Date.parse("2026-08-11T19:30:00Z"))).toEqual({
+      allowed: false,
+      reason: "30 minutes or less remain before the regular market close",
+    });
   });
 });
