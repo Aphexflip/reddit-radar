@@ -1,0 +1,33 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "reddit-radar-options-intelligence",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "vars": {
+    "SYSTEM_VERSION": "0.1.0",
+    "EXECUTION_MODE": "paper",
+    "DAILY_TARGET_USD": "50",
+    "DAILY_HARD_CAP_USD": "100",
+    "MAX_SINGLE_TRADE_USD": "100",
+    "DAILY_LOSS_STOP_USD": "40"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "reddit-radar-options-intelligence",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "EVIDENCE",
+      "bucket_name": "reddit-radar-evidence"
+    }
+  ]
+}
