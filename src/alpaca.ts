@@ -102,10 +102,10 @@ function parseStockSnapshot(payload: JsonRecord) {
   return {
     observed_at: observedAt,
     underlying_price: price,
-    bid: bid ?? undefined,
-    ask: ask ?? undefined,
-    last: tradePrice ?? undefined,
-    volume: finiteNumber(dailyBar?.v ?? dailyBar?.volume) ?? undefined,
+    bid,
+    ask,
+    last: tradePrice,
+    volume: finiteNumber(dailyBar?.v ?? dailyBar?.volume),
   };
 }
 
@@ -130,6 +130,13 @@ function parseOptionSnapshot(
 
   const observedAt = stringValue(latestQuote?.t ?? latestQuote?.timestamp)
     ?? new Date().toISOString();
+  const volume = finiteNumber(dailyBar?.v ?? dailyBar?.volume);
+  const openInterest = finiteNumber(contract.open_interest);
+  const impliedVolatility = finiteNumber(snapshot.impliedVolatility ?? snapshot.implied_volatility);
+  const delta = finiteNumber(greeks?.delta);
+  const gamma = finiteNumber(greeks?.gamma);
+  const theta = finiteNumber(greeks?.theta);
+  const vega = finiteNumber(greeks?.vega);
 
   return {
     contract_symbol: symbol,
@@ -141,14 +148,14 @@ function parseOptionSnapshot(
     underlying_price: underlyingPrice,
     bid,
     ask,
-    mark: ask >= bid ? (ask + bid) / 2 : undefined,
-    volume: finiteNumber(dailyBar?.v ?? dailyBar?.volume) ?? undefined,
-    open_interest: finiteNumber(contract.open_interest) ?? undefined,
-    implied_volatility: finiteNumber(snapshot.impliedVolatility ?? snapshot.implied_volatility) ?? undefined,
-    delta: finiteNumber(greeks?.delta) ?? undefined,
-    gamma: finiteNumber(greeks?.gamma) ?? undefined,
-    theta: finiteNumber(greeks?.theta) ?? undefined,
-    vega: finiteNumber(greeks?.vega) ?? undefined,
+    ...(ask >= bid ? { mark: (ask + bid) / 2 } : {}),
+    ...(volume === null ? {} : { volume }),
+    ...(openInterest === null ? {} : { open_interest: openInterest }),
+    ...(impliedVolatility === null ? {} : { implied_volatility: impliedVolatility }),
+    ...(delta === null ? {} : { delta }),
+    ...(gamma === null ? {} : { gamma }),
+    ...(theta === null ? {} : { theta }),
+    ...(vega === null ? {} : { vega }),
   };
 }
 
@@ -263,7 +270,7 @@ export async function alpacaPredict(env: AlpacaEnv, input: AlpacaPredictInput) {
   const stock = parseStockSnapshot(stockPayload);
   const signalContext = await recentSignalScore(env, ticker, lookbackHours);
 
-  let options: OptionCandidate[] = [];
+  const options: OptionCandidate[] = [];
   let directionUsed: "call" | "put" | null = null;
 
   if (signalContext.score.opportunityScore >= 0.60 && Math.abs(signalContext.score.directionalScore) >= 0.20) {
@@ -295,16 +302,16 @@ export async function alpacaPredict(env: AlpacaEnv, input: AlpacaPredictInput) {
 
   const prediction = await generatePrediction(env, {
     ticker,
-    horizon_minutes: input.horizon_minutes,
+    ...(input.horizon_minutes === undefined ? {} : { horizon_minutes: input.horizon_minutes }),
     lookback_hours: lookbackHours,
     market: {
       observed_at: stock.observed_at,
       provider: `alpaca:${stockFeed}`,
       underlying_price: stock.underlying_price,
-      bid: stock.bid,
-      ask: stock.ask,
-      last: stock.last,
-      volume: stock.volume,
+      ...(stock.bid === null ? {} : { bid: stock.bid }),
+      ...(stock.ask === null ? {} : { ask: stock.ask }),
+      ...(stock.last === null ? {} : { last: stock.last }),
+      ...(stock.volume === null ? {} : { volume: stock.volume }),
     },
     options,
   });
