@@ -84,7 +84,7 @@ export function scoreSignals(signals: SignalForScoring[]): SignalScore {
   }
 
   let weightedDirection = 0;
-  let confidenceWeight = 0;
+  let directionalConfidenceWeight = 0;
   let confidenceTotal = 0;
   const bullishSignalIds: string[] = [];
   const bearishSignalIds: string[] = [];
@@ -100,8 +100,13 @@ export function scoreSignals(signals: SignalForScoring[]): SignalScore {
       ? 0.35
       : clamp(Math.abs(signal.normalized_value));
 
-    weightedDirection += sign * strength * confidence;
-    confidenceWeight += confidence;
+    // Neutral/context signals contribute to data quality and evidence depth, but they
+    // do not belong in the directional denominator. Otherwise collecting more useful
+    // non-directional context would mathematically dilute a genuine bull/bear signal.
+    if (sign !== 0) {
+      weightedDirection += sign * strength * confidence;
+      directionalConfidenceWeight += confidence;
+    }
     confidenceTotal += confidence;
 
     if (sign > 0) bullishSignalIds.push(signal.id);
@@ -109,8 +114,8 @@ export function scoreSignals(signals: SignalForScoring[]): SignalScore {
     else neutralSignalIds.push(signal.id);
   }
 
-  const directionalScore = confidenceWeight > 0
-    ? clamp(weightedDirection / confidenceWeight, -1, 1)
+  const directionalScore = directionalConfidenceWeight > 0
+    ? clamp(weightedDirection / directionalConfidenceWeight, -1, 1)
     : 0;
   const averageConfidence = confidenceTotal / signals.length;
   const evidenceDepth = clamp(signals.length / 6);
