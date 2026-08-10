@@ -12,6 +12,7 @@
     "db:local": "wrangler d1 migrations apply reddit-radar-options-intelligence --local"
   },
   "devDependencies": {
+    "@types/node": "latest",
     "typescript": "latest",
     "vitest": "latest",
     "wrangler": "latest"
