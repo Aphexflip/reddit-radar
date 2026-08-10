@@ -1,4 +1,4 @@
-import { ingestEvent } from "./engine";
+import { ingestEvent, type IngestEventInput } from "./engine";
 
 export type SecEnv = Env & { SEC_USER_AGENT?: string };
 
@@ -206,14 +206,14 @@ export async function pollSecSubmissions(env: SecEnv, input: SecPollInput) {
       continue;
     }
 
-    const signals = [
+    const signals: IngestEventInput["signals"] = [
       {
         signal_type: "sec_filing_detected",
         numeric_value: 1,
         normalized_value: 0,
         baseline_value: 0,
         unit: "event",
-        direction_hint: "neutral" as const,
+        direction_hint: "neutral",
         confidence: 1,
         metadata: { form: filing.form },
       },
@@ -223,7 +223,7 @@ export async function pollSecSubmissions(env: SecEnv, input: SecPollInput) {
         normalized_value: 0,
         baseline_value: 0,
         unit: "event",
-        direction_hint: "neutral" as const,
+        direction_hint: "neutral",
         confidence: 1,
         metadata: { form: filing.form, items: filing.items },
       },
@@ -236,7 +236,7 @@ export async function pollSecSubmissions(env: SecEnv, input: SecPollInput) {
         normalized_value: 0,
         baseline_value: 0,
         unit: "event",
-        direction_hint: "neutral" as const,
+        direction_hint: "neutral",
         confidence: 1,
         metadata: { form: filing.form, item },
       });
@@ -258,7 +258,7 @@ export async function pollSecSubmissions(env: SecEnv, input: SecPollInput) {
       summary: filing.primaryDocDescription || `${filing.form} filed with the U.S. Securities and Exchange Commission`,
       ticker,
       entity_name: input.entity_name || payload.name || ticker,
-      exchange: input.exchange,
+      ...(input.exchange === undefined ? {} : { exchange: input.exchange }),
       signals,
       metadata: {
         cik: cik10,
