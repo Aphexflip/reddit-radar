@@ -1,4 +1,5 @@
 import { alpacaPredict, type AlpacaPredictInput } from "./alpaca";
+import { runAutonomousPaperCycle, type PaperCycleInput } from "./cycle";
 import { dashboardHtml } from "./dashboard";
 import {
   generatePrediction,
@@ -105,6 +106,11 @@ export default {
           alpaca_configured: Boolean(env.ALPACA_API_KEY_ID?.trim() && env.ALPACA_API_SECRET_KEY?.trim()),
           alpaca_stock_feed: env.ALPACA_STOCK_FEED?.trim() || "iex",
           alpaca_option_feed: env.ALPACA_OPTION_FEED?.trim() || "indicative",
+          autonomous_paper_cycle_ready: Boolean(
+            env.EXECUTION_MODE === "paper" &&
+            env.ALPACA_API_KEY_ID?.trim() &&
+            env.ALPACA_API_SECRET_KEY?.trim()
+          ),
           timestamp: new Date().toISOString(),
         });
       }
@@ -151,6 +157,11 @@ export default {
       if (url.pathname === "/api/alpaca/predict" && request.method === "POST") {
         const input = await readJson<AlpacaPredictInput>(request);
         return json(await alpacaPredict(env, input), 201);
+      }
+
+      if (url.pathname === "/api/run/paper-cycle" && request.method === "POST") {
+        const input = await readJson<PaperCycleInput>(request);
+        return json(await runAutonomousPaperCycle(env, input), 201);
       }
 
       if (url.pathname === "/api/predictions" && request.method === "POST") {
