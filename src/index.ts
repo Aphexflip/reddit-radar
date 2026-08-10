@@ -17,6 +17,7 @@ import {
   type ExpandGraphInput,
   type UpsertRelationshipInput,
 } from "./graph";
+import { collectDueOutcomes } from "./outcomes";
 import { executeTieredPaperPrediction } from "./paper";
 import { syncPulseTrends, type PulseSyncInput } from "./pulse";
 import { pollSecSubmissions, type SecPollInput } from "./sec";
@@ -174,6 +175,12 @@ export default {
         const predictionId = decodeURIComponent(paperMatch[1] ?? "");
         if (!predictionId) return json({ error: "prediction id is required" }, 400);
         return json(await executeTieredPaperPrediction(env, predictionId));
+      }
+
+      if (url.pathname === "/api/outcomes/collect" && request.method === "POST") {
+        const input = await readJson<{ limit?: number }>(request);
+        const limit = Number.isFinite(input.limit) ? Number(input.limit) : 20;
+        return json(await collectDueOutcomes(env, limit));
       }
 
       if (url.pathname === "/api/outcomes" && request.method === "POST") {
