@@ -41,12 +41,19 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$WRITE_TOKEN"
-          curl -fsS \
+          status="$(curl -sS \
             -X POST "$BASE_URL/api/alpaca/predict" \
             -H "Authorization: Bearer $WRITE_TOKEN" \
             -H "Content-Type: application/json" \
             --data '{"ticker":"AAPL","horizon_minutes":1440,"lookback_hours":6}' \
-            -o prediction.json
+            -o prediction.json \
+            -w '%{http_code}')"
+          echo "Prediction HTTP status: $status"
+          cat prediction.json
+          echo
+          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+            exit 1
+          fi
           node - <<'NODE'
           const fs = require('fs');
           const p = JSON.parse(fs.readFileSync('prediction.json','utf8'));
