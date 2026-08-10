@@ -19,9 +19,6 @@ jobs:
     env:
       BASE_URL: https://reddit-radar-options-intelligence.aphexflip.workers.dev
       WRITE_TOKEN: ${{ secrets.WRITE_TOKEN }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      PULSE_DB_ID: 46d471aa-70b7-42f2-a290-f3d264d6dcbc
     steps:
       - name: Check live health
         shell: bash
@@ -38,23 +35,6 @@ jobs:
           if (!h.alpaca_configured) throw new Error('Alpaca not configured');
           if (!h.autonomous_paper_cycle_ready) throw new Error('paper cycle not ready');
           NODE
-
-      - name: Inspect Pulse D1 schema read-only
-        shell: bash
-        run: |
-          set -euo pipefail
-          npx --yes wrangler@4.120.1 d1 list --json > d1-list.json
-          node - <<'NODE'
-          const fs = require('fs');
-          const rows = JSON.parse(fs.readFileSync('d1-list.json','utf8'));
-          const row = rows.find(r => r.uuid === process.env.PULSE_DB_ID);
-          console.log('Accessible D1 databases:', rows.map(r => ({name:r.name, uuid:r.uuid})));
-          if (!row) throw new Error('Pulse D1 UUID not found');
-          fs.appendFileSync(process.env.GITHUB_ENV, `PULSE_DB_NAME=${row.name}\n`);
-          console.log('Resolved Pulse DB:', row.name);
-          NODE
-          npx --yes wrangler@4.120.1 d1 execute "$PULSE_DB_NAME" --remote --command "SELECT name, type, sql FROM sqlite_master WHERE type IN ('table','view') ORDER BY name;" --json > pulse-schema.json
-          cat pulse-schema.json
 
       - name: Sync real Reddit Pulse evidence
         shell: bash
@@ -80,6 +60,7 @@ jobs:
           const rows = Array.isArray(p.results) ? p.results : [];
           console.log(JSON.stringify({
             source: p.source,
+            source_mode: p.source_mode,
             checked_stock_trends: p.checked_stock_trends,
             ingested: p.ingested,
             duplicates: p.duplicates,
@@ -153,7 +134,7 @@ jobs:
         run: |
           RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           if [ "${{ job.status }}" = "success" ]; then
-            gh issue comment 1 --repo "$GITHUB_REPOSITORY" --body "✅ LIVE SMOKE TEST PASSED — deployed Worker health, live Reddit Pulse evidence sync, Alpaca research prediction on the top Pulse ticker, opportunities ledger, and proof ledger all responded. No paper execution endpoint was called, so no after-hours simulated fill was created. Run: ${RUN_URL}"
+            gh issue comment 1 --repo "$GITHUB_REPOSITORY" --body "✅ LIVE SMOKE TEST PASSED — deployed Worker health, direct Reddit Pulse D1 evidence sync, Alpaca research prediction on the top Pulse ticker, opportunities ledger, and proof ledger all responded. No paper execution endpoint was called, so no after-hours simulated fill was created. Run: ${RUN_URL}"
           else
-            gh issue comment 1 --repo "$GITHUB_REPOSITORY" --body "❌ LIVE SMOKE TEST FAILED — evidence-first live smoke test failed. No paper execution endpoint was called. Run: ${RUN_URL}"
+            gh issue comment 1 --repo "$GITHUB_REPOSITORY" --body "❌ LIVE SMOKE TEST FAILED — app-only evidence-first smoke test failed. No paper execution endpoint was called. Run: ${RUN_URL}"
           fi
