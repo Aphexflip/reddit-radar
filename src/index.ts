@@ -17,6 +17,7 @@ import {
   type ExpandGraphInput,
   type UpsertRelationshipInput,
 } from "./graph";
+import { syncPulseTrends, type PulseSyncInput } from "./pulse";
 import { pollSecSubmissions, type SecPollInput } from "./sec";
 
 type RuntimeEnv = Env & {
@@ -26,6 +27,8 @@ type RuntimeEnv = Env & {
   ALPACA_API_SECRET_KEY?: string;
   ALPACA_STOCK_FEED?: string;
   ALPACA_OPTION_FEED?: string;
+  PULSE_API_ORIGIN?: string;
+  PULSE_API_TOKEN?: string;
 };
 
 interface CloudflareSubtleCrypto extends SubtleCrypto {
@@ -98,6 +101,7 @@ export default {
           execution_mode: env.EXECUTION_MODE,
           live_trading_enabled: false,
           sec_configured: Boolean(env.SEC_USER_AGENT?.trim()),
+          pulse_origin: env.PULSE_API_ORIGIN?.trim() || "https://redditpulse-v0.aphexflip.workers.dev",
           alpaca_configured: Boolean(env.ALPACA_API_KEY_ID?.trim() && env.ALPACA_API_SECRET_KEY?.trim()),
           alpaca_stock_feed: env.ALPACA_STOCK_FEED?.trim() || "iex",
           alpaca_option_feed: env.ALPACA_OPTION_FEED?.trim() || "indicative",
@@ -122,6 +126,11 @@ export default {
       if (url.pathname === "/api/events" && request.method === "POST") {
         const input = await readJson<IngestEventInput>(request);
         return json(await ingestEvent(env, input), 201);
+      }
+
+      if (url.pathname === "/api/pulse/sync" && request.method === "POST") {
+        const input = await readJson<PulseSyncInput>(request);
+        return json(await syncPulseTrends(env, input));
       }
 
       if (url.pathname === "/api/sec/poll" && request.method === "POST") {
