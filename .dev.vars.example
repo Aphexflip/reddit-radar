@@ -2,6 +2,10 @@
 # Never commit real credentials or personal contact values.
 WRITE_TOKEN=replace-with-a-long-random-secret
 
+# Proven Pulse Markets backend. Override only when deliberately testing another backend.
+PULSE_API_ORIGIN=https://redditpulse-v0.aphexflip.workers.dev
+# PULSE_API_TOKEN=replace-if-pulse-backend-is-later-protected
+
 # SEC asks automated clients to identify themselves with organization/app + monitored contact.
 SEC_USER_AGENT=RSYMO Reddit Radar your-monitored-contact@example.com
 
