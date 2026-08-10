@@ -2,6 +2,7 @@ export interface PaperPolicyInput {
   dailyTargetUsd: number;
   dailyHardCapUsd: number;
   maxSingleTradeUsd: number;
+  maxOpenRiskUsd: number;
   dailyLossStopUsd: number;
   minOpportunityScore: number;
   exceptionalOpportunityScore: number;
@@ -9,6 +10,7 @@ export interface PaperPolicyInput {
 
 export interface PaperRiskInput {
   deployedUsd: number;
+  openRiskUsd: number;
   realizedPnlUsd: number;
   newPositionsBlocked: boolean;
   blockReason?: string | null;
@@ -41,6 +43,7 @@ interface PolicyRow {
   daily_target_usd: number;
   daily_hard_cap_usd: number;
   max_single_trade_usd: number;
+  max_open_risk_usd: number;
   daily_loss_stop_usd: number;
   min_opportunity_score: number;
   exceptional_opportunity_score: number;
@@ -62,6 +65,7 @@ function tradingDate(iso: string): string {
 export function evaluatePaperPolicy(input: PaperDecisionInput): PaperPolicyDecision {
   const { debitUsd, estimatedEvScore, policy, risk } = input;
   const projectedDeployment = risk.deployedUsd + debitUsd;
+  const projectedOpenRisk = risk.openRiskUsd + debitUsd;
 
   if (risk.newPositionsBlocked) {
     return {
@@ -92,6 +96,14 @@ export function evaluatePaperPolicy(input: PaperDecisionInput): PaperPolicyDecis
       status: "requires_escalation",
       tier: "escalation",
       reason: "single trade exceeds autonomous max; user approval required",
+    };
+  }
+
+  if (projectedOpenRisk > policy.maxOpenRiskUsd) {
+    return {
+      status: "requires_escalation",
+      tier: "escalation",
+      reason: "total open option debit risk would exceed the autonomous cap; user approval required",
     };
   }
 
@@ -194,6 +206,7 @@ export async function executeTieredPaperPrediction(env: Env, predictionId: strin
       daily_target_usd,
       daily_hard_cap_usd,
       max_single_trade_usd,
+      max_open_risk_usd,
       daily_loss_stop_usd,
       min_opportunity_score,
       exceptional_opportunity_score
@@ -216,6 +229,12 @@ export async function executeTieredPaperPrediction(env: Env, predictionId: strin
   `).bind(date).first<DailyRiskRow>();
   if (!risk) throw new Error("daily risk state unavailable");
 
+  const openRisk = await env.DB.prepare(`
+    SELECT COALESCE(SUM(notional_usd), 0) AS open_risk_usd
+    FROM paper_orders
+    WHERE status = 'filled'
+  `).first<{ open_risk_usd: number }>();
+
   const debitUsd = context.option_ask * 100;
   const policyDecision = evaluatePaperPolicy({
     debitUsd,
@@ -224,12 +243,14 @@ export async function executeTieredPaperPrediction(env: Env, predictionId: strin
       dailyTargetUsd: policy.daily_target_usd,
       dailyHardCapUsd: policy.daily_hard_cap_usd,
       maxSingleTradeUsd: policy.max_single_trade_usd,
+      maxOpenRiskUsd: policy.max_open_risk_usd,
       dailyLossStopUsd: policy.daily_loss_stop_usd,
       minOpportunityScore: policy.min_opportunity_score,
       exceptionalOpportunityScore: policy.exceptional_opportunity_score,
     },
     risk: {
       deployedUsd: risk.deployed_usd,
+      openRiskUsd: openRisk?.open_risk_usd ?? 0,
       realizedPnlUsd: risk.realized_pnl_usd,
       newPositionsBlocked: Boolean(risk.new_positions_blocked),
       blockReason: risk.block_reason,
@@ -284,6 +305,9 @@ export async function executeTieredPaperPrediction(env: Env, predictionId: strin
     exceptional_threshold: policy.exceptional_opportunity_score,
     daily_target_usd: policy.daily_target_usd,
     daily_hard_cap_usd: policy.daily_hard_cap_usd,
+    max_open_risk_usd: policy.max_open_risk_usd,
+    open_risk_before_trade_usd: openRisk?.open_risk_usd ?? 0,
+    open_risk_after_trade_usd: filled ? (openRisk?.open_risk_usd ?? 0) + debitUsd : (openRisk?.open_risk_usd ?? 0),
     deployed_before_trade_usd: risk.deployed_usd,
     deployed_after_trade_usd: filled ? risk.deployed_usd + debitUsd : risk.deployed_usd,
   };
