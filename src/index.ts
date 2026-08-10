@@ -1,3 +1,4 @@
+import { alpacaPredict, type AlpacaPredictInput } from "./alpaca";
 import { dashboardHtml } from "./dashboard";
 import {
   executePaperPrediction,
@@ -12,7 +13,14 @@ import {
 } from "./engine";
 import { pollSecSubmissions, type SecPollInput } from "./sec";
 
-type RuntimeEnv = Env & { WRITE_TOKEN?: string; SEC_USER_AGENT?: string };
+type RuntimeEnv = Env & {
+  WRITE_TOKEN?: string;
+  SEC_USER_AGENT?: string;
+  ALPACA_API_KEY_ID?: string;
+  ALPACA_API_SECRET_KEY?: string;
+  ALPACA_STOCK_FEED?: string;
+  ALPACA_OPTION_FEED?: string;
+};
 
 interface CloudflareSubtleCrypto extends SubtleCrypto {
   timingSafeEqual(a: ArrayBuffer | ArrayBufferView, b: ArrayBuffer | ArrayBufferView): boolean;
@@ -84,6 +92,9 @@ export default {
           execution_mode: env.EXECUTION_MODE,
           live_trading_enabled: false,
           sec_configured: Boolean(env.SEC_USER_AGENT?.trim()),
+          alpaca_configured: Boolean(env.ALPACA_API_KEY_ID?.trim() && env.ALPACA_API_SECRET_KEY?.trim()),
+          alpaca_stock_feed: env.ALPACA_STOCK_FEED?.trim() || "iex",
+          alpaca_option_feed: env.ALPACA_OPTION_FEED?.trim() || "indicative",
           timestamp: new Date().toISOString(),
         });
       }
@@ -110,6 +121,11 @@ export default {
       if (url.pathname === "/api/sec/poll" && request.method === "POST") {
         const input = await readJson<SecPollInput>(request);
         return json(await pollSecSubmissions(env, input));
+      }
+
+      if (url.pathname === "/api/alpaca/predict" && request.method === "POST") {
+        const input = await readJson<AlpacaPredictInput>(request);
+        return json(await alpacaPredict(env, input), 201);
       }
 
       if (url.pathname === "/api/predictions" && request.method === "POST") {
