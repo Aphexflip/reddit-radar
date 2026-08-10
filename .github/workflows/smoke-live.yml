@@ -36,16 +36,49 @@ jobs:
           if (!h.autonomous_paper_cycle_ready) throw new Error('paper cycle not ready');
           NODE
 
-      - name: Create safe AAPL research prediction
+      - name: Sync real Reddit Pulse evidence
         shell: bash
         run: |
           set -euo pipefail
           test -n "$WRITE_TOKEN"
           status="$(curl -sS \
+            -X POST "$BASE_URL/api/pulse/sync" \
+            -H "Authorization: Bearer $WRITE_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data '{"hours":1,"limit":25}' \
+            -o pulse.json \
+            -w '%{http_code}')"
+          echo "Pulse sync HTTP status: $status"
+          cat pulse.json
+          echo
+          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+            exit 1
+          fi
+          node - <<'NODE'
+          const fs = require('fs');
+          const p = JSON.parse(fs.readFileSync('pulse.json','utf8'));
+          const rows = Array.isArray(p.results) ? p.results : [];
+          console.log(JSON.stringify({
+            source: p.source,
+            checked_stock_trends: p.checked_stock_trends,
+            ingested: p.ingested,
+            duplicates: p.duplicates,
+            top_results: rows.slice(0,5)
+          }, null, 2));
+          if (!rows.length || !rows[0].ticker) throw new Error('Pulse returned no stock ticker for smoke test');
+          fs.appendFileSync(process.env.GITHUB_ENV, `TEST_TICKER=${rows[0].ticker}\n`);
+          NODE
+
+      - name: Create safe research prediction for top Pulse ticker
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$TEST_TICKER"
+          status="$(curl -sS \
             -X POST "$BASE_URL/api/alpaca/predict" \
             -H "Authorization: Bearer $WRITE_TOKEN" \
             -H "Content-Type: application/json" \
-            --data '{"ticker":"AAPL","horizon_minutes":1440,"lookback_hours":6}' \
+            --data "{\"ticker\":\"$TEST_TICKER\",\"horizon_minutes\":1440,\"lookback_hours\":6}" \
             -o prediction.json \
             -w '%{http_code}')"
           echo "Prediction HTTP status: $status"
@@ -100,7 +133,7 @@ jobs:
         run: |
           RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           if [ "${{ job.status }}" = "success" ]; then
-            gh issue comment 1 --repo "$GITHUB_REPOSITORY" --body "✅ LIVE SMOKE TEST PASSED — deployed Worker health, Alpaca connection, safe AAPL research prediction, opportunities ledger, and proof ledger all responded. No paper execution endpoint was called, so no after-hours simulated fill was created. Run: ${RUN_URL}"
+            gh issue comment 1 --repo "$GITHUB_REPOSITORY" --body "✅ LIVE SMOKE TEST PASSED — deployed Worker health, live Reddit Pulse evidence sync, Alpaca research prediction on the top Pulse ticker, opportunities ledger, and proof ledger all responded. No paper execution endpoint was called, so no after-hours simulated fill was created. Run: ${RUN_URL}"
           else
-            gh issue comment 1 --repo "$GITHUB_REPOSITORY" --body "❌ LIVE SMOKE TEST FAILED — safe AAPL research test failed. No paper execution endpoint was called. Run: ${RUN_URL}"
+            gh issue comment 1 --repo "$GITHUB_REPOSITORY" --body "❌ LIVE SMOKE TEST FAILED — evidence-first live smoke test failed. No paper execution endpoint was called. Run: ${RUN_URL}"
           fi
