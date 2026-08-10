@@ -2,6 +2,8 @@ import { runAutonomousPaperCycle, type AutonomousPaperEnv } from "./cycle";
 import { getUsMarketClock, paperEntryGate, type AlpacaClock } from "./market";
 import { collectDueOutcomes } from "./outcomes";
 
+export { getUsMarketClock, paperEntryGate } from "./market";
+
 export interface ScheduledTickSummary {
   timestamp: string;
   outcome_collection: Awaited<ReturnType<typeof collectDueOutcomes>> | null;
