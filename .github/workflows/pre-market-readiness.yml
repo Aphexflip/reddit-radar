@@ -23,6 +23,7 @@ jobs:
       ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PULSE_DB_ID: 46d471aa-70b7-42f2-a290-f3d264d6dcbc
       SCRIPT_NAME: reddit-radar-options-intelligence
       EXPECTED_CRON: "*/15 13-22 * * 1-5"
 
@@ -109,16 +110,34 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npx --yes wrangler@4.120.1 d1 execute redditpulse-db --remote \
-            --command "SELECT MAX(created_utc) AS latest_comment_utc, SUM(CASE WHEN created_utc >= unixepoch() - 3600 THEN 1 ELSE 0 END) AS comments_last_hour FROM comments; SELECT COUNT(*) AS mentions_last_hour FROM mentions m JOIN comments c ON c.id = m.comment_id WHERE c.created_utc >= unixepoch() - 3600;" \
-            --json > pulse-freshness.json
+          cat > d1-query.json <<'JSON'
+          {
+            "batch": [
+              {
+                "sql": "SELECT MAX(created_utc) AS latest_comment_utc, SUM(CASE WHEN created_utc >= unixepoch() - 3600 THEN 1 ELSE 0 END) AS comments_last_hour FROM comments;",
+                "params": []
+              },
+              {
+                "sql": "SELECT COUNT(*) AS mentions_last_hour FROM mentions m JOIN comments c ON c.id = m.comment_id WHERE c.created_utc >= unixepoch() - 3600;",
+                "params": []
+              }
+            ]
+          }
+          JSON
+          curl -fsS \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$PULSE_DB_ID/query" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data @d1-query.json \
+            -o pulse-freshness.json
           cat pulse-freshness.json
           echo
           node - <<'NODE'
           const fs = require('fs');
           const payload = JSON.parse(fs.readFileSync('pulse-freshness.json','utf8'));
-          const first = payload?.[0]?.results?.[0] ?? {};
-          const second = payload?.[1]?.results?.[0] ?? {};
+          if (!payload.success) throw new Error('Cloudflare D1 query API did not return success');
+          const first = payload?.result?.[0]?.results?.[0] ?? {};
+          const second = payload?.result?.[1]?.results?.[0] ?? {};
           const latest = Number(first.latest_comment_utc || 0);
           const comments = Number(first.comments_last_hour || 0);
           const mentions = Number(second.mentions_last_hour || 0);
