@@ -48,8 +48,8 @@ export function paperEntryGate(clock: AlpacaClock, nowMs = Date.now()): {
   }
 
   const minutesToClose = minutesUntil(clock.next_close, nowMs);
-  if (minutesToClose !== null && minutesToClose < 30) {
-    return { allowed: false, reason: "less than 30 minutes remain before the regular market close" };
+  if (minutesToClose !== null && minutesToClose <= 30) {
+    return { allowed: false, reason: "30 minutes or less remain before the regular market close" };
   }
 
   return { allowed: true, reason: null };
