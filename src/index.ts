@@ -1,7 +1,6 @@
 import { alpacaPredict, type AlpacaPredictInput } from "./alpaca";
 import { dashboardHtml } from "./dashboard";
 import {
-  executePaperPrediction,
   generatePrediction,
   ingestEvent,
   listOpportunities,
@@ -17,6 +16,7 @@ import {
   type ExpandGraphInput,
   type UpsertRelationshipInput,
 } from "./graph";
+import { executeTieredPaperPrediction } from "./paper";
 import { syncPulseTrends, type PulseSyncInput } from "./pulse";
 import { pollSecSubmissions, type SecPollInput } from "./sec";
 
@@ -162,7 +162,7 @@ export default {
       if (paperMatch && request.method === "POST") {
         const predictionId = decodeURIComponent(paperMatch[1] ?? "");
         if (!predictionId) return json({ error: "prediction id is required" }, 400);
-        return json(await executePaperPrediction(env, predictionId));
+        return json(await executeTieredPaperPrediction(env, predictionId));
       }
 
       if (url.pathname === "/api/outcomes" && request.method === "POST") {
