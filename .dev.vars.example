@@ -1,3 +1,14 @@
 # Copy to .dev.vars for local development only.
-# Never commit the real value.
+# Never commit real credentials or personal contact values.
 WRITE_TOKEN=replace-with-a-long-random-secret
+
+# SEC asks automated clients to identify themselves with organization/app + monitored contact.
+SEC_USER_AGENT=RSYMO Reddit Radar your-monitored-contact@example.com
+
+# Optional development market/options adapter.
+ALPACA_API_KEY_ID=replace-with-paper-key-id
+ALPACA_API_SECRET_KEY=replace-with-paper-secret
+
+# Free defaults are IEX equities + indicative options. Indicative options are paper-only.
+ALPACA_STOCK_FEED=iex
+ALPACA_OPTION_FEED=indicative
