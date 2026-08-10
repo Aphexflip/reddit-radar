@@ -1,3 +1,6 @@
+import type { AlpacaEnv } from "./alpaca";
+import { getUsMarketClock, paperEntryGate } from "./market";
+
 export interface PaperPolicyInput {
   dailyTargetUsd: number;
   dailyHardCapUsd: number;
@@ -138,7 +141,7 @@ export function evaluatePaperPolicy(input: PaperDecisionInput): PaperPolicyDecis
   };
 }
 
-export async function executeTieredPaperPrediction(env: Env, predictionId: string) {
+export async function executeTieredPaperPrediction(env: AlpacaEnv, predictionId: string) {
   if (env.EXECUTION_MODE !== "paper") {
     throw new Error("paper executor is disabled because EXECUTION_MODE is not paper");
   }
@@ -197,6 +200,18 @@ export async function executeTieredPaperPrediction(env: Env, predictionId: strin
       status: "not_tradeable",
       tier: "blocked",
       reason: "prediction is PASS or has no executable selected option",
+    };
+  }
+
+  const marketClock = await getUsMarketClock(env);
+  const marketGate = paperEntryGate(marketClock);
+  if (!marketGate.allowed) {
+    return {
+      executed: false,
+      status: "market_closed",
+      tier: "blocked",
+      reason: marketGate.reason,
+      market_clock: marketClock,
     };
   }
 
@@ -310,5 +325,6 @@ export async function executeTieredPaperPrediction(env: Env, predictionId: strin
     open_risk_after_trade_usd: filled ? (openRisk?.open_risk_usd ?? 0) + debitUsd : (openRisk?.open_risk_usd ?? 0),
     deployed_before_trade_usd: risk.deployed_usd,
     deployed_after_trade_usd: filled ? risk.deployed_usd + debitUsd : risk.deployed_usd,
+    market_clock: marketClock,
   };
 }
