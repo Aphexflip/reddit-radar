@@ -143,11 +143,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh issue comment 1 --body "✅ PAPER DEPLOY SUCCESS — commit ${GITHUB_SHA}. Cloudflare D1/R2, migrations, Worker, cron, and runtime secrets completed. EXECUTION_MODE remains paper; live broker execution is disabled."
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          gh issue comment 1 --body "✅ PAPER DEPLOY SUCCESS — commit ${GITHUB_SHA}. Cloudflare D1/R2, migrations, Worker, cron, and runtime secrets completed. EXECUTION_MODE remains paper; live broker execution is disabled. Run: ${RUN_URL}"
 
       - name: Report deployment failure
         if: failure()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh issue comment 1 --body "❌ PAPER DEPLOY FAILED — commit ${GITHUB_SHA}. Check the Deploy Paper System workflow logs for the first failed step. No live broker execution exists in this build."
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          gh issue comment 1 --body "❌ PAPER DEPLOY FAILED — commit ${GITHUB_SHA}. Check the first failed step. No live broker execution exists in this build. Run: ${RUN_URL}"
