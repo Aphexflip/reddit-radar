@@ -51,6 +51,34 @@ describe("signal scoring", () => {
     expect(result.bullishSignalIds).toHaveLength(3);
   });
 
+  it("does not let neutral context dilute a directional signal", () => {
+    const base = scoreSignals([
+      signal("bull", "bullish", 0.70, 0.90),
+    ]);
+    const withContext = scoreSignals([
+      signal("bull", "bullish", 0.70, 0.90),
+      {
+        id: "velocity",
+        signal_type: "reddit_mention_velocity",
+        observed_at: now,
+        normalized_value: 1,
+        direction_hint: "neutral",
+        confidence: 1,
+      },
+      {
+        id: "spread",
+        signal_type: "reddit_subreddit_spread",
+        observed_at: now,
+        normalized_value: 1,
+        direction_hint: "neutral",
+        confidence: 1,
+      },
+    ]);
+
+    expect(withContext.directionalScore).toBeCloseTo(base.directionalScore, 8);
+    expect(withContext.dataQuality).toBeGreaterThan(base.dataQuality);
+  });
+
   it("passes on weak conflicting evidence", () => {
     const result = decideOpportunity([
       signal("a", "bullish", 0.25, 0.6),
