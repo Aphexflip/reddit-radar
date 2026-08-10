@@ -1,4 +1,5 @@
 import { generatePrediction } from "./engine";
+import { scheduleOutcomeTargets } from "./outcomes";
 import { scoreSignals, type OptionCandidate, type SignalForScoring } from "./scoring";
 
 export type AlpacaEnv = Env & {
@@ -300,9 +301,10 @@ export async function alpacaPredict(env: AlpacaEnv, input: AlpacaPredictInput) {
     }
   }
 
+  const horizonMinutes = input.horizon_minutes ?? 1_440;
   const prediction = await generatePrediction(env, {
     ticker,
-    ...(input.horizon_minutes === undefined ? {} : { horizon_minutes: input.horizon_minutes }),
+    horizon_minutes: horizonMinutes,
     lookback_hours: lookbackHours,
     market: {
       observed_at: stock.observed_at,
@@ -316,8 +318,15 @@ export async function alpacaPredict(env: AlpacaEnv, input: AlpacaPredictInput) {
     options,
   });
 
+  const outcomeTargets = await scheduleOutcomeTargets(env, {
+    prediction_id: prediction.prediction_id,
+    published_at: prediction.published_at,
+    horizon_minutes: horizonMinutes,
+  });
+
   return {
     ...prediction,
+    outcome_targets_scheduled: outcomeTargets.length,
     market_adapter: "alpaca-v0.1",
     stock_feed: stockFeed,
     option_feed: optionFeed,
