@@ -10,8 +10,9 @@ import {
   type IngestEventInput,
   type RecordOutcomeInput,
 } from "./engine";
+import { pollSecSubmissions, type SecPollInput } from "./sec";
 
-type RuntimeEnv = Env & { WRITE_TOKEN?: string };
+type RuntimeEnv = Env & { WRITE_TOKEN?: string; SEC_USER_AGENT?: string };
 
 interface CloudflareSubtleCrypto extends SubtleCrypto {
   timingSafeEqual(a: ArrayBuffer | ArrayBufferView, b: ArrayBuffer | ArrayBufferView): boolean;
@@ -82,6 +83,7 @@ export default {
           system_version: env.SYSTEM_VERSION,
           execution_mode: env.EXECUTION_MODE,
           live_trading_enabled: false,
+          sec_configured: Boolean(env.SEC_USER_AGENT?.trim()),
           timestamp: new Date().toISOString(),
         });
       }
@@ -103,6 +105,11 @@ export default {
       if (url.pathname === "/api/events" && request.method === "POST") {
         const input = await readJson<IngestEventInput>(request);
         return json(await ingestEvent(env, input), 201);
+      }
+
+      if (url.pathname === "/api/sec/poll" && request.method === "POST") {
+        const input = await readJson<SecPollInput>(request);
+        return json(await pollSecSubmissions(env, input));
       }
 
       if (url.pathname === "/api/predictions" && request.method === "POST") {
