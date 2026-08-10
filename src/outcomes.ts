@@ -7,6 +7,12 @@ export interface ScheduleOutcomeInput {
   horizon_minutes: number;
 }
 
+export interface OutcomeTargetSpec {
+  horizon_label: string;
+  target_time: string;
+  not_before_time: string;
+}
+
 interface DueTargetRow {
   target_id: string;
   prediction_id: string;
@@ -20,6 +26,7 @@ interface DueTargetRow {
   paper_order_status: string | null;
   paper_fill_price: number | null;
   paper_notional_usd: number | null;
+  paper_filled_at: string | null;
   prediction_horizon_minutes: number;
 }
 
@@ -153,21 +160,39 @@ async function optionBarAtOrAfter(
   return firstBarAtOrAfter(bars, targetTime);
 }
 
-export async function scheduleOutcomeTargets(env: Env, input: ScheduleOutcomeInput) {
-  const feed = (env as AlpacaEnv).ALPACA_OPTION_FEED?.trim().toLowerCase() || "indicative";
-  // Free indicative option data is delayed. Waiting 20 minutes makes it much more likely
-  // the historical bar covering the target exists before collection runs.
-  const collectionDelayMinutes = feed === "opra" ? 2 : 20;
+export function buildOutcomeTargetSpecs(
+  publishedAt: string,
+  horizonMinutes: number,
+  optionFeed: string,
+): OutcomeTargetSpec[] {
+  const collectionDelayMinutes = optionFeed.trim().toLowerCase() === "opra" ? 2 : 20;
   const fixedTargets = [
     { label: "30m_elapsed", minutes: 30 },
     { label: "24h_elapsed", minutes: 1_440 },
     { label: "72h_elapsed", minutes: 4_320 },
     { label: "120h_elapsed", minutes: 7_200 },
-    { label: "predicted_elapsed", minutes: Math.max(30, input.horizon_minutes) },
+    { label: "predicted_elapsed", minutes: Math.max(30, horizonMinutes) },
   ];
 
-  for (const target of fixedTargets) {
-    const targetTime = addMinutes(input.published_at, target.minutes);
+  return fixedTargets.map((target) => {
+    const targetTime = addMinutes(publishedAt, target.minutes);
+    return {
+      horizon_label: target.label,
+      target_time: targetTime,
+      not_before_time: addMinutes(targetTime, collectionDelayMinutes),
+    };
+  });
+}
+
+export async function scheduleOutcomeTargets(env: Env, input: ScheduleOutcomeInput) {
+  const feed = (env as AlpacaEnv).ALPACA_OPTION_FEED?.trim().toLowerCase() || "indicative";
+  const targets = buildOutcomeTargetSpecs(
+    input.published_at,
+    input.horizon_minutes,
+    feed,
+  );
+
+  for (const target of targets) {
     await env.DB.prepare(`
       INSERT OR IGNORE INTO outcome_targets(
         id, prediction_id, horizon_label, target_time, not_before_time
@@ -175,11 +200,13 @@ export async function scheduleOutcomeTargets(env: Env, input: ScheduleOutcomeInp
     `).bind(
       crypto.randomUUID(),
       input.prediction_id,
-      target.label,
-      targetTime,
-      addMinutes(targetTime, collectionDelayMinutes),
+      target.horizon_label,
+      target.target_time,
+      target.not_before_time,
     ).run();
   }
+
+  return targets;
 }
 
 async function dueTargets(env: Env, limit: number): Promise<DueTargetRow[]> {
@@ -197,6 +224,7 @@ async function dueTargets(env: Env, limit: number): Promise<DueTargetRow[]> {
       po.status AS paper_order_status,
       po.fill_price AS paper_fill_price,
       po.notional_usd AS paper_notional_usd,
+      po.filled_at AS paper_filled_at,
       p.horizon_minutes AS prediction_horizon_minutes
     FROM outcome_targets ot
     JOIN predictions p ON p.id = ot.prediction_id
@@ -212,6 +240,62 @@ async function dueTargets(env: Env, limit: number): Promise<DueTargetRow[]> {
     LIMIT ?2
   `).bind(new Date().toISOString(), limit).all<DueTargetRow>();
   return result.results;
+}
+
+async function bookPaperClose(
+  env: Env,
+  target: DueTargetRow,
+  actualBarTime: string,
+  exitPrice: number,
+) {
+  if (
+    !target.paper_order_id ||
+    target.paper_order_status !== "filled" ||
+    target.paper_fill_price === null
+  ) {
+    return null;
+  }
+
+  const realizedPnlUsd = (exitPrice - target.paper_fill_price) * 100;
+  const closeDate = actualBarTime.slice(0, 10);
+
+  await env.DB.prepare(`
+    INSERT OR IGNORE INTO daily_risk_state(trading_date) VALUES(?1)
+  `).bind(closeDate).run();
+
+  const update = await env.DB.prepare(`
+    UPDATE paper_orders SET
+      status = 'closed',
+      exit_target_time = ?2,
+      closed_at = ?3,
+      exit_price = ?4,
+      realized_pnl_usd = ?5,
+      exit_method = 'historical_trade_bar_close'
+    WHERE id = ?1 AND status = 'filled'
+  `).bind(
+    target.paper_order_id,
+    target.target_time,
+    actualBarTime,
+    exitPrice,
+    realizedPnlUsd,
+  ).run();
+
+  if ((update.meta.changes ?? 0) > 0) {
+    await env.DB.prepare(`
+      UPDATE daily_risk_state SET
+        realized_pnl_usd = realized_pnl_usd + ?2,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE trading_date = ?1
+    `).bind(closeDate, realizedPnlUsd).run();
+  }
+
+  return {
+    order_id: target.paper_order_id,
+    exit_price: exitPrice,
+    realized_pnl_usd: realizedPnlUsd,
+    exit_method: "historical_trade_bar_close",
+    risk_date: closeDate,
+  };
 }
 
 export async function collectDueOutcomes(env: AlpacaEnv, limit = 20) {
@@ -247,7 +331,6 @@ export async function collectDueOutcomes(env: AlpacaEnv, limit = 20) {
         observed_at: actualBarTime,
         underlying_exit_price: stockBar.c,
         ...(optionBar ? { option_exit_mid: optionBar.c } : {}),
-        ...(optionBar?.h === undefined ? {} : { max_favorable_excursion_pct: null as never }),
         metadata: {
           collector: "alpaca-historical-bars-v0.1",
           target_time: target.target_time,
@@ -260,40 +343,9 @@ export async function collectDueOutcomes(env: AlpacaEnv, limit = 20) {
         },
       });
 
-      // At the predicted horizon, close the paper position using the same time-aligned
-      // option trade-bar reference. This is deliberately labeled as a mark-based paper
-      // exit, not a claim that the price was executable.
       let paperClose: Record<string, unknown> | null = null;
-      if (
-        target.horizon_label === "predicted_elapsed" &&
-        target.paper_order_id &&
-        target.paper_order_status === "filled" &&
-        target.paper_fill_price !== null &&
-        optionBar
-      ) {
-        const realizedPnlUsd = (optionBar.c - target.paper_fill_price) * 100;
-        await env.DB.prepare(`
-          UPDATE paper_orders SET
-            status = 'closed',
-            exit_target_time = ?2,
-            closed_at = ?3,
-            exit_price = ?4,
-            realized_pnl_usd = ?5,
-            exit_method = 'historical_trade_bar_close'
-          WHERE id = ?1 AND status = 'filled'
-        `).bind(
-          target.paper_order_id,
-          target.target_time,
-          actualBarTime,
-          optionBar.c,
-          realizedPnlUsd,
-        ).run();
-        paperClose = {
-          order_id: target.paper_order_id,
-          exit_price: optionBar.c,
-          realized_pnl_usd: realizedPnlUsd,
-          exit_method: "historical_trade_bar_close",
-        };
+      if (target.horizon_label === "predicted_elapsed" && optionBar) {
+        paperClose = await bookPaperClose(env, target, actualBarTime, optionBar.c);
       }
 
       await env.DB.prepare(`
