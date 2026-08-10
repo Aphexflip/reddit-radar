@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 concurrency:
   group: reddit-radar-paper-deploy
@@ -136,3 +137,17 @@ jobs:
         run: |
           echo "Paper Worker deployed with D1/R2 and runtime secrets."
           echo "EXECUTION_MODE remains paper and no live broker adapter exists in this build."
+
+      - name: Report deployment success
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment 1 --body "✅ PAPER DEPLOY SUCCESS — commit ${GITHUB_SHA}. Cloudflare D1/R2, migrations, Worker, cron, and runtime secrets completed. EXECUTION_MODE remains paper; live broker execution is disabled."
+
+      - name: Report deployment failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment 1 --body "❌ PAPER DEPLOY FAILED — commit ${GITHUB_SHA}. Check the Deploy Paper System workflow logs for the first failed step. No live broker execution exists in this build."
