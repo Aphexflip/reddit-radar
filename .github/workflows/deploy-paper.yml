@@ -2,6 +2,9 @@ name: Deploy Paper System
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - agent/v01-options-intelligence-foundation
 
 permissions:
   contents: read
@@ -58,7 +61,7 @@ jobs:
           npm run typecheck
           npm run deploy:dry
 
-      - name: Resolve or create D1 database
+      - name: Resolve or create Radar D1 database
         shell: bash
         run: |
           set -euo pipefail
@@ -87,12 +90,34 @@ jobs:
           fi
 
           if [ -z "$D1_ID" ]; then
-            echo "::error::Could not resolve the D1 database UUID after provisioning"
+            echo "::error::Could not resolve the Radar D1 database UUID after provisioning"
             exit 1
           fi
 
           echo "D1_ID=$D1_ID" >> "$GITHUB_ENV"
-          echo "Resolved D1 database UUID."
+          echo "Resolved Radar D1 database UUID."
+
+      - name: Resolve existing Pulse D1 database read-only binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          PULSE_D1_ID="$(npx wrangler d1 list --json | node -e '
+            let s="";
+            process.stdin.on("data",d=>s+=d);
+            process.stdin.on("end",()=>{
+              const rows=JSON.parse(s);
+              const match=rows.find(x=>x.name==="redditpulse-db");
+              if(match?.uuid) process.stdout.write(match.uuid);
+            });
+          ')"
+
+          if [ -z "$PULSE_D1_ID" ]; then
+            echo "::error::Existing Pulse D1 database redditpulse-db was not found; refusing to create or replace it"
+            exit 1
+          fi
+
+          echo "PULSE_D1_ID=$PULSE_D1_ID" >> "$GITHUB_ENV"
+          echo "Resolved existing Pulse D1 database UUID for read-only application use."
 
       - name: Resolve or create R2 evidence bucket
         shell: bash
@@ -132,7 +157,7 @@ jobs:
 
       - name: Deployment boundary summary
         run: |
-          echo "Paper Worker deployed with D1/R2 and runtime secrets."
+          echo "Paper Worker deployed with Radar D1, read-only Pulse D1 binding, R2, and runtime secrets."
           echo "EXECUTION_MODE remains paper and no live broker adapter exists in this build."
 
       - name: Report deployment success
@@ -141,7 +166,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          gh issue comment 1 --body "✅ PAPER DEPLOY SUCCESS — commit ${GITHUB_SHA}. Cloudflare D1/R2, migrations, Worker, cron, and runtime secrets completed. EXECUTION_MODE remains paper; live broker execution is disabled. Run: ${RUN_URL}"
+          gh issue comment 1 --body "✅ PAPER DEPLOY SUCCESS — commit ${GITHUB_SHA}. Radar D1/R2, read-only Pulse D1 binding, migrations, Worker, cron, and runtime secrets completed. EXECUTION_MODE remains paper; live broker execution is disabled. Run: ${RUN_URL}"
 
       - name: Report deployment failure
         if: failure()
