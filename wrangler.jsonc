@@ -8,6 +8,9 @@
     "enabled": true,
     "head_sampling_rate": 1
   },
+  "triggers": {
+    "crons": ["*/15 13-22 * * 1-5"]
+  },
   "vars": {
     "SYSTEM_VERSION": "0.1.0",
     "EXECUTION_MODE": "paper",
