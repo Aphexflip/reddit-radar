@@ -109,28 +109,28 @@ jobs:
           fi
 
       - name: Prepare deploy-only Wrangler config
-        run: node scripts/prepare-deploy-config.mjs wrangler.jsonc /tmp/wrangler.deploy.jsonc
+        run: node scripts/prepare-deploy-config.mjs wrangler.jsonc .wrangler.deploy.jsonc
 
       - name: Apply remote D1 migrations
-        run: npx wrangler d1 migrations apply reddit-radar-options-intelligence --remote --config /tmp/wrangler.deploy.jsonc
+        run: npx wrangler d1 migrations apply reddit-radar-options-intelligence --remote --config .wrangler.deploy.jsonc
 
       - name: Deploy paper Worker
-        run: npx wrangler deploy --config /tmp/wrangler.deploy.jsonc
+        run: npx wrangler deploy --config .wrangler.deploy.jsonc
 
       - name: Install Worker runtime secrets
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s' "$WRITE_TOKEN" | npx wrangler secret put WRITE_TOKEN --config /tmp/wrangler.deploy.jsonc
-          printf '%s' "$ALPACA_API_KEY_ID" | npx wrangler secret put ALPACA_API_KEY_ID --config /tmp/wrangler.deploy.jsonc
-          printf '%s' "$ALPACA_API_SECRET_KEY" | npx wrangler secret put ALPACA_API_SECRET_KEY --config /tmp/wrangler.deploy.jsonc
+          printf '%s' "$WRITE_TOKEN" | npx wrangler secret put WRITE_TOKEN --config .wrangler.deploy.jsonc
+          printf '%s' "$ALPACA_API_KEY_ID" | npx wrangler secret put ALPACA_API_KEY_ID --config .wrangler.deploy.jsonc
+          printf '%s' "$ALPACA_API_SECRET_KEY" | npx wrangler secret put ALPACA_API_SECRET_KEY --config .wrangler.deploy.jsonc
 
           if [ -n "${SEC_USER_AGENT:-}" ]; then
-            printf '%s' "$SEC_USER_AGENT" | npx wrangler secret put SEC_USER_AGENT --config /tmp/wrangler.deploy.jsonc
+            printf '%s' "$SEC_USER_AGENT" | npx wrangler secret put SEC_USER_AGENT --config .wrangler.deploy.jsonc
           fi
 
           if [ -n "${PULSE_API_TOKEN:-}" ]; then
-            printf '%s' "$PULSE_API_TOKEN" | npx wrangler secret put PULSE_API_TOKEN --config /tmp/wrangler.deploy.jsonc
+            printf '%s' "$PULSE_API_TOKEN" | npx wrangler secret put PULSE_API_TOKEN --config .wrangler.deploy.jsonc
           fi
 
       - name: Deployment boundary summary
