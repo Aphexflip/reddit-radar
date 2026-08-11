@@ -136,6 +136,31 @@ jobs:
       - name: Apply remote D1 migrations
         run: npx wrangler d1 migrations apply reddit-radar-options-intelligence --remote --config .wrangler.deploy.jsonc
 
+      - name: Run requested immediate paper validation cycle
+        if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[paper-test]') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RADAR_ORIGIN: https://reddit-radar-options-intelligence.aphexflip.workers.dev
+        shell: bash
+        run: |
+          set -euo pipefail
+          RESPONSE="$(curl --fail-with-body --silent --show-error \
+            -X POST "${RADAR_ORIGIN}/api/run/paper-cycle" \
+            -H "Authorization: Bearer ${WRITE_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data '{"pulse_hours":1,"trend_limit":25,"candidate_limit":10,"signal_lookback_hours":6}')"
+          printf '%s\n' "$RESPONSE" > /tmp/paper-cycle.json
+          SUMMARY="$(node - <<'NODE'
+          const fs = require('fs');
+          const x = JSON.parse(fs.readFileSync('/tmp/paper-cycle.json','utf8'));
+          const fills = (x.items || []).filter(i => i.execution_status === 'filled').map(i => ({ticker:i.ticker,recommendation:i.recommendation,paper_order_id:i.paper_order_id,execution_tier:i.execution_tier}));
+          const tradeDecisions = (x.items || []).filter(i => i.recommendation === 'CALL' || i.recommendation === 'PUT').map(i => ({ticker:i.ticker,recommendation:i.recommendation,execution_status:i.execution_status,execution_tier:i.execution_tier,error:i.error}));
+          process.stdout.write(JSON.stringify({cycle_id:x.cycle_id,candidates_seen:x.candidates_seen,calls:x.calls,puts:x.puts,passes:x.passes,paper_fills:x.paper_fills,escalations:x.escalations,errors:x.errors,fills,trade_decisions:tradeDecisions}, null, 2));
+          NODE
+          )"
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          gh issue comment 1 --body "## Immediate paper validation cycle\n\n\`\`\`json\n${SUMMARY}\n\`\`\`\n\nRun: ${RUN_URL}\n\nPaper simulation only; live broker execution remains disabled."
+
       - name: Deploy paper Worker
         run: npx wrangler deploy --config .wrangler.deploy.jsonc
 
