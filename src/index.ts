@@ -22,6 +22,7 @@ import { proofSummary } from "./proof";
 import { syncPulseTrends, type PulseSyncInput } from "./pulse";
 import { runScheduledPaperTick } from "./scheduler";
 import { pollSecSubmissions, type SecPollInput } from "./sec";
+import { paperSessionStatus } from "./session";
 
 type RuntimeEnv = Env & {
   WRITE_TOKEN?: string;
@@ -115,6 +116,10 @@ export default {
           ),
           timestamp: new Date().toISOString(),
         });
+      }
+
+      if (url.pathname === "/api/session/status" && request.method === "GET") {
+        return json(await paperSessionStatus(env));
       }
 
       if (url.pathname === "/api/opportunities" && request.method === "GET") {
