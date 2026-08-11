@@ -22,6 +22,7 @@ export interface PaperRiskInput {
 export interface PaperDecisionInput {
   debitUsd: number;
   estimatedEvScore: number;
+  underlyingOpportunityScore?: number;
   policy: PaperPolicyInput;
   risk: PaperRiskInput;
 }
@@ -35,6 +36,7 @@ export interface PaperPolicyDecision {
 interface PredictionContextRow {
   prediction_id: string;
   recommendation_type: "CALL" | "PUT" | "PASS";
+  underlying_opportunity_score: number;
   estimated_ev_score: number;
   option_snapshot_id: string | null;
   contract_symbol: string | null;
@@ -67,6 +69,7 @@ function tradingDate(iso: string): string {
 
 export function evaluatePaperPolicy(input: PaperDecisionInput): PaperPolicyDecision {
   const { debitUsd, estimatedEvScore, policy, risk } = input;
+  const executionScore = input.underlyingOpportunityScore ?? estimatedEvScore;
   const projectedDeployment = risk.deployedUsd + debitUsd;
   const projectedOpenRisk = risk.openRiskUsd + debitUsd;
 
@@ -86,11 +89,11 @@ export function evaluatePaperPolicy(input: PaperDecisionInput): PaperPolicyDecis
     };
   }
 
-  if (estimatedEvScore < policy.minOpportunityScore) {
+  if (executionScore < policy.minOpportunityScore) {
     return {
       status: "blocked",
       tier: "blocked",
-      reason: "opportunity score below normal execution threshold",
+      reason: "underlying opportunity score below normal execution threshold",
     };
   }
 
@@ -126,7 +129,7 @@ export function evaluatePaperPolicy(input: PaperDecisionInput): PaperPolicyDecis
     };
   }
 
-  if (estimatedEvScore < policy.exceptionalOpportunityScore) {
+  if (executionScore < policy.exceptionalOpportunityScore) {
     return {
       status: "blocked",
       tier: "blocked",
@@ -150,6 +153,7 @@ export async function executeTieredPaperPrediction(env: AlpacaEnv, predictionId:
     SELECT
       p.id AS prediction_id,
       r.recommendation_type,
+      r.underlying_opportunity_score,
       r.estimated_ev_score,
       ocs.id AS option_snapshot_id,
       ocs.contract_symbol,
@@ -254,6 +258,7 @@ export async function executeTieredPaperPrediction(env: AlpacaEnv, predictionId:
   const policyDecision = evaluatePaperPolicy({
     debitUsd,
     estimatedEvScore: context.estimated_ev_score,
+    underlyingOpportunityScore: context.underlying_opportunity_score,
     policy: {
       dailyTargetUsd: policy.daily_target_usd,
       dailyHardCapUsd: policy.daily_hard_cap_usd,
@@ -315,6 +320,7 @@ export async function executeTieredPaperPrediction(env: AlpacaEnv, predictionId:
     debit_usd: debitUsd,
     status: storedStatus,
     reason: policyDecision.reason,
+    underlying_opportunity_score: context.underlying_opportunity_score,
     estimated_ev_score: context.estimated_ev_score,
     normal_threshold: policy.min_opportunity_score,
     exceptional_threshold: policy.exceptional_opportunity_score,

@@ -50,6 +50,13 @@ export interface ScoredOption {
   dte: number;
 }
 
+export interface DecisionPolicy {
+  opportunityThreshold: number;
+  directionalThreshold: number;
+  maxOptionDebitUsd?: number;
+  lane?: "strategy" | "exploration";
+}
+
 export interface OpportunityDecision {
   recommendation: "CALL" | "PUT" | "PASS";
   direction: "bullish" | "bearish" | "neutral";
@@ -60,6 +67,12 @@ export interface OpportunityDecision {
   moonshotScore: number;
   reasons: string[];
 }
+
+const DEFAULT_DECISION_POLICY: DecisionPolicy = {
+  opportunityThreshold: 0.60,
+  directionalThreshold: 0.20,
+  lane: "strategy",
+};
 
 const clamp = (value: number, min = 0, max = 1): number =>
   Math.max(min, Math.min(max, value));
@@ -93,16 +106,10 @@ export function scoreSignals(signals: SignalForScoring[]): SignalScore {
   for (const signal of signals) {
     const confidence = clamp(signal.confidence);
     const sign = directionSign(signal.direction_hint);
-    // Upstream features are expected to normalize comparable signal strength into 0..1.
-    // Missing normalized strength is deliberately treated as weak evidence rather than
-    // guessing how an arbitrary raw number should scale.
     const strength = signal.normalized_value === null
       ? 0.35
       : clamp(Math.abs(signal.normalized_value));
 
-    // Neutral/context signals contribute to data quality and evidence depth, but they
-    // do not belong in the directional denominator. Otherwise collecting more useful
-    // non-directional context would mathematically dilute a genuine bull/bear signal.
     if (sign !== 0) {
       weightedDirection += sign * strength * confidence;
       directionalConfidenceWeight += confidence;
@@ -157,8 +164,6 @@ export function scoreOptionCandidate(option: OptionCandidate, nowIso: string): S
   const openInterest = option.open_interest ?? 0;
   const volume = option.volume ?? 0;
 
-  // v0.1 quality gate. This is intentionally not a budget filter; the best contract
-  // can be recommended even when execution policy later requires escalation.
   if (
     !Number.isFinite(spreadPct) ||
     spreadPct > 0.25 ||
@@ -190,9 +195,12 @@ export function decideOpportunity(
   signals: SignalForScoring[],
   options: OptionCandidate[],
   nowIso: string,
+  policy: DecisionPolicy = DEFAULT_DECISION_POLICY,
 ): OpportunityDecision {
   const signalScore = scoreSignals(signals);
   const reasons: string[] = [];
+  const opportunityThreshold = clamp(policy.opportunityThreshold);
+  const directionalThreshold = clamp(policy.directionalThreshold);
 
   if (signals.length === 0) {
     reasons.push("No timestamped signals are available for the entity.");
@@ -208,8 +216,15 @@ export function decideOpportunity(
     };
   }
 
-  if (signalScore.opportunityScore < 0.60 || Math.abs(signalScore.directionalScore) < 0.20) {
-    reasons.push("Evidence does not clear the v0.1 opportunity threshold.");
+  if (
+    signalScore.opportunityScore < opportunityThreshold ||
+    Math.abs(signalScore.directionalScore) < directionalThreshold
+  ) {
+    reasons.push(
+      `Evidence does not clear the ${policy.lane ?? "strategy"} gate ` +
+      `(opportunity ${signalScore.opportunityScore.toFixed(3)}/${opportunityThreshold.toFixed(2)}, ` +
+      `|direction| ${Math.abs(signalScore.directionalScore).toFixed(3)}/${directionalThreshold.toFixed(2)}).`,
+    );
     return {
       recommendation: "PASS",
       direction: "neutral",
@@ -224,15 +239,17 @@ export function decideOpportunity(
 
   const direction = signalScore.directionalScore > 0 ? "bullish" : "bearish";
   const requiredOptionType: OptionType = direction === "bullish" ? "call" : "put";
+  const maxDebit = policy.maxOptionDebitUsd;
   const scored = options
     .filter((option) => option.option_type === requiredOptionType)
+    .filter((option) => maxDebit === undefined || (option.ask * 100) <= maxDebit)
     .map((option) => scoreOptionCandidate(option, nowIso))
     .filter((item): item is ScoredOption => item !== null)
     .sort((a, b) => b.score - a.score);
 
   const selectedOption = scored[0] ?? null;
   if (!selectedOption) {
-    reasons.push(`Underlying thesis is ${direction}, but no ${requiredOptionType} passes liquidity/DTE quality gates.`);
+    reasons.push(`Underlying thesis is ${direction}, but no ${requiredOptionType} passes liquidity/DTE quality gates${maxDebit === undefined ? "" : ` within the $${maxDebit.toFixed(0)} exploration debit cap`}.`);
     reasons.push("A good stock thesis is not enough to justify a bad option.");
     return {
       recommendation: "PASS",
@@ -247,15 +264,15 @@ export function decideOpportunity(
   }
 
   const optionExpressionScore = selectedOption.score;
-  // This is a ranking score, NOT a calibrated dollar EV estimate. Calibration will be
-  // learned from the immutable outcome ledger before live capital is allowed to scale.
   const estimatedEvScore = clamp(signalScore.opportunityScore * optionExpressionScore);
   const absDelta = Math.abs(selectedOption.option.delta ?? 0.35);
   const leverageProxy = clamp((0.50 - Math.min(absDelta, 0.50)) / 0.50);
   const moonshotScore = clamp((0.65 * estimatedEvScore) + (0.35 * leverageProxy));
 
-  reasons.push(`${signals.length} timestamped signal(s) clear the underlying evidence threshold.`);
-  reasons.push(`Selected ${selectedOption.option.contract_symbol} after liquidity, spread, delta, and DTE gates.`);
+  reasons.push(
+    `${signals.length} timestamped signal(s) clear the ${policy.lane ?? "strategy"} evidence gate.`,
+  );
+  reasons.push(`Selected ${selectedOption.option.contract_symbol} after liquidity, spread, delta, DTE${maxDebit === undefined ? "" : ", and exploration debit"} gates.`);
 
   return {
     recommendation: direction === "bullish" ? "CALL" : "PUT",
