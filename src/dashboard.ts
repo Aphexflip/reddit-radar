@@ -43,6 +43,7 @@ export function dashboardHtml(): string {
     .badge.trade { color:#7ff5ac; border-color:#28563a; background:#0e2016; }
     .badge.put { color:#ff9ba5; border-color:#61323b; background:#251014; }
     .badge.blocked { color:#ffb579; border-color:#6b4930; background:#24170d; }
+    .badge.test { color:#b9ccff; border-color:#39517c; background:#10182a; }
     .scoreline { display:flex; justify-content:space-between; gap:10px; margin-top:13px; font-size:12px; color:#a5afc0; }
     .meter { height:8px; background:#1b2230; border-radius:999px; overflow:hidden; margin-top:6px; position:relative; }
     .meter::after { content:""; position:absolute; top:0; bottom:0; left:100%; width:1px; background:#e8edf7; opacity:.5; }
@@ -63,7 +64,13 @@ export function dashboardHtml(): string {
     .call { color:#7ff5ac; font-weight:800; }
     .put { color:#ff8d98; font-weight:800; }
     .pass { color:#aab2c2; font-weight:800; }
+    .pnlpos { color:#7ff5ac; font-weight:800; }
+    .pnlneg { color:#ff8d98; font-weight:800; }
     .warn { border:1px solid #665829; background:#201b0d; color:#f4d477; padding:12px 14px; border-radius:12px; margin:16px 0; line-height:1.5; }
+    .portfolio { margin:24px 0; }
+    .portfolioHead { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; flex-wrap:wrap; margin-bottom:10px; }
+    .portfolioNote { max-width:780px; color:#8792a5; font-size:12px; line-height:1.5; }
+    .sectionGap { margin-top:24px; }
     code { color:#b9ccff; }
     @media (max-width: 900px) { .grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .funnel{grid-template-columns:repeat(2,minmax(0,1fr));} .candidateGrid{grid-template-columns:1fr;} .tablewrap{overflow:auto;} .engineMeta{text-align:left;} }
     @media (max-width: 520px) { .grid { grid-template-columns:1fr; } .funnel{grid-template-columns:1fr;} }
@@ -115,13 +122,41 @@ export function dashboardHtml(): string {
 
   <section class="grid">
     <div class="card"><div class="label">Predictions</div><div id="predictions" class="metric">—</div><div class="detail">Immutable calls / puts / passes</div></div>
-    <div class="card"><div class="label">Open paper trades</div><div id="openPaper" class="metric">—</div><div class="detail">Simulated positions still awaiting horizon exit</div></div>
-    <div class="card"><div class="label">Closed paper trades</div><div id="closedPaper" class="metric">—</div><div id="paperWin" class="detail">—</div></div>
-    <div class="card"><div class="label">Paper realized P&amp;L</div><div id="paperPnl" class="metric">—</div><div class="detail">Mark-based paper exits; not broker fills</div></div>
+    <div class="card"><div class="label">Open strategy trades</div><div id="openPaper" class="metric">—</div><div class="detail">Autonomous strategy fills still awaiting horizon exit</div></div>
+    <div class="card"><div class="label">Closed strategy trades</div><div id="closedPaper" class="metric">—</div><div id="paperWin" class="detail">—</div></div>
+    <div class="card"><div class="label">Strategy realized P&amp;L</div><div id="paperPnl" class="metric">—</div><div class="detail">Paper exits; system tests excluded</div></div>
     <div class="card"><div class="label">Option reference outcomes</div><div id="markOutcomes" class="metric">—</div><div id="markWin" class="detail">—</div></div>
     <div class="card"><div class="label">Execution-grade outcomes</div><div id="execOutcomes" class="metric">—</div><div id="execWin" class="detail">—</div></div>
     <div class="card"><div class="label">Outcome checkpoints</div><div id="targets" class="metric">—</div><div id="targetDetail" class="detail">—</div></div>
     <div class="card"><div class="label">Autonomous cycles</div><div id="cycles" class="metric">—</div><div id="cycleDetail" class="detail">—</div></div>
+  </section>
+
+  <section class="card portfolio">
+    <div class="portfolioHead">
+      <div>
+        <div class="label">Paper portfolio</div>
+        <h2>Open Positions</h2>
+        <div class="portfolioNote">Strategy fills and isolated mechanical tests live here. <b>SYSTEM TEST</b> rows prove the plumbing only; they are not recommendations and are excluded from strategy performance/proof.</div>
+      </div>
+      <span id="portfolioSummary" class="pill">Loading</span>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Lane</th><th>Ticker</th><th>Side</th><th>Contract</th><th>Entry</th><th>Debit</th><th>Mark / P&amp;L</th><th>Opened</th></tr></thead>
+        <tbody id="openPositionRows"><tr><td colspan="8">Loading…</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="sectionGap">
+      <div class="label">Paper portfolio</div>
+      <h2>Completed Trades</h2>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Lane</th><th>Ticker</th><th>Side</th><th>Contract</th><th>Entry</th><th>Exit</th><th>Realized P&amp;L</th><th>Closed</th></tr></thead>
+          <tbody id="closedTradeRows"><tr><td colspan="8">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
   </section>
 
   <section class="card">
@@ -198,6 +233,76 @@ function renderCandidate(x){
   '</div>';
 }
 
+function laneBadge(row){
+  return row.lane === 'system_test'
+    ? '<span class="badge test">SYSTEM TEST</span>'
+    : '<span class="badge trade">STRATEGY</span>';
+}
+
+function sideText(row){
+  if (row.lane === 'system_test') return String(row.option_type || '').toUpperCase() + ' TEST';
+  return row.recommendation_type || row.option_type || '—';
+}
+
+function renderPortfolio(portfolio){
+  const strategyOpen = portfolio.strategy?.open || [];
+  const systemOpen = portfolio.system_test?.open || [];
+  const strategyClosed = portfolio.strategy?.closed || [];
+  const systemClosed = portfolio.system_test?.closed || [];
+  const opens = [...strategyOpen, ...systemOpen];
+  const closed = [...strategyClosed, ...systemClosed];
+
+  document.querySelector('#portfolioSummary').textContent = opens.length + ' OPEN · ' + closed.length + ' CLOSED';
+  const openRows = document.querySelector('#openPositionRows');
+  if (!opens.length) {
+    openRows.innerHTML = '<tr><td colspan="8">No open paper positions yet.</td></tr>';
+  } else {
+    openRows.innerHTML = opens.map(row => {
+      const entry = row.lane === 'system_test' ? row.entry_fill_price : row.fill_price;
+      const opened = row.lane === 'system_test' ? row.opened_at : row.filled_at;
+      let mark = 'Waiting for mark';
+      if (row.lane === 'system_test' && row.last_mark != null) {
+        const pnl = Number(row.unrealized_pnl_usd || 0);
+        const cls = pnl > 0 ? 'pnlpos' : pnl < 0 ? 'pnlneg' : '';
+        mark = '$' + Number(row.last_mark).toFixed(2) + ' · <span class="' + cls + '">' + usd(pnl) + '</span>';
+      } else if (row.lane === 'strategy') {
+        mark = 'Strategy horizon tracking';
+      }
+      return '<tr>' +
+        '<td>' + laneBadge(row) + '</td>' +
+        '<td><b>' + esc(row.ticker) + '</b></td>' +
+        '<td>' + esc(sideText(row)) + '</td>' +
+        '<td>' + esc(row.contract_symbol) + '</td>' +
+        '<td>' + (entry == null ? '—' : '$' + Number(entry).toFixed(2)) + '</td>' +
+        '<td>' + usd(row.notional_usd) + '</td>' +
+        '<td>' + mark + '</td>' +
+        '<td>' + (opened ? new Date(opened).toLocaleString() : '—') + '</td>' +
+      '</tr>';
+    }).join('');
+  }
+
+  const closedRows = document.querySelector('#closedTradeRows');
+  if (!closed.length) {
+    closedRows.innerHTML = '<tr><td colspan="8">No completed paper trades yet.</td></tr>';
+  } else {
+    closedRows.innerHTML = closed.map(row => {
+      const entry = row.lane === 'system_test' ? row.entry_fill_price : row.fill_price;
+      const pnl = Number(row.realized_pnl_usd || 0);
+      const cls = pnl > 0 ? 'pnlpos' : pnl < 0 ? 'pnlneg' : '';
+      return '<tr>' +
+        '<td>' + laneBadge(row) + '</td>' +
+        '<td><b>' + esc(row.ticker) + '</b></td>' +
+        '<td>' + esc(sideText(row)) + '</td>' +
+        '<td>' + esc(row.contract_symbol) + '</td>' +
+        '<td>' + (entry == null ? '—' : '$' + Number(entry).toFixed(2)) + '</td>' +
+        '<td>' + (row.exit_price == null ? '—' : '$' + Number(row.exit_price).toFixed(2)) + '</td>' +
+        '<td class="' + cls + '">' + usd(pnl) + '</td>' +
+        '<td>' + (row.closed_at ? new Date(row.closed_at).toLocaleString() : '—') + '</td>' +
+      '</tr>';
+    }).join('');
+  }
+}
+
 async function loadSession(){
   try {
     const res = await fetch('/api/session/status', {cache:'no-store'});
@@ -221,9 +326,15 @@ async function loadSession(){
 }
 
 async function loadCore(){
-  const [proofRes, oppRes] = await Promise.all([fetch('/api/proof'), fetch('/api/opportunities?limit=30')]);
+  const [proofRes, oppRes, portfolioRes] = await Promise.all([
+    fetch('/api/proof', {cache:'no-store'}),
+    fetch('/api/opportunities?limit=30', {cache:'no-store'}),
+    fetch('/api/paper/portfolio', {cache:'no-store'}),
+  ]);
+  if (!proofRes.ok || !oppRes.ok || !portfolioRes.ok) throw new Error('One or more Radar APIs are unavailable');
   const proof = await proofRes.json();
   const opp = await oppRes.json();
+  const portfolio = await portfolioRes.json();
   document.querySelector('#predictions').textContent = proof.prediction_count ?? 0;
   document.querySelector('#openPaper').textContent = proof.paper?.open_count ?? 0;
   document.querySelector('#closedPaper').textContent = proof.paper?.closed_count ?? 0;
@@ -240,6 +351,7 @@ async function loadCore(){
   const warning = document.querySelector('#warning');
   const warnings = Array.isArray(proof.warnings) ? proof.warnings : [];
   warning.textContent = warnings.length ? warnings.join(' ') : 'Minimum sample warnings cleared. This still does not guarantee future profitability.';
+  renderPortfolio(portfolio);
   const rows = document.querySelector('#rows');
   if (!opp.length) { rows.innerHTML = '<tr><td colspan="8">No predictions yet.</td></tr>'; return; }
   rows.innerHTML = opp.map(x => {

@@ -18,11 +18,13 @@ import {
 } from "./graph";
 import { collectDueOutcomes } from "./outcomes";
 import { executeTieredPaperPrediction } from "./paper";
+import { paperPortfolio } from "./portfolio";
 import { proofSummary } from "./proof";
 import { syncPulseTrends, type PulseSyncInput } from "./pulse";
 import { runScheduledPaperTick } from "./scheduler";
 import { pollSecSubmissions, type SecPollInput } from "./sec";
 import { paperSessionStatus } from "./session";
+import { runSystemTestTrade, type SystemTestInput } from "./system-test";
 
 type RuntimeEnv = Env & {
   WRITE_TOKEN?: string;
@@ -131,6 +133,10 @@ export default {
         return json(await proofSummary(env));
       }
 
+      if (url.pathname === "/api/paper/portfolio" && request.method === "GET") {
+        return json(await paperPortfolio(env));
+      }
+
       if (isWriteMethod(request.method) && url.pathname.startsWith("/api/")) {
         const denied = await authorizeWrite(request, env);
         if (denied) return denied;
@@ -174,6 +180,11 @@ export default {
       if (url.pathname === "/api/predictions" && request.method === "POST") {
         const input = await readJson<GeneratePredictionInput>(request);
         return json(await generatePrediction(env, input), 201);
+      }
+
+      if (url.pathname === "/api/paper/system-test" && request.method === "POST") {
+        const input = await readJson<SystemTestInput>(request);
+        return json(await runSystemTestTrade(env, input), 201);
       }
 
       const paperMatch = url.pathname.match(/^\/api\/paper\/execute\/([^/]+)$/);

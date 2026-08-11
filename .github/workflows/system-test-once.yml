@@ -1,0 +1,69 @@
+name: One-Time Paper System Test
+
+on:
+  push:
+    branches:
+      - agent/v01-options-intelligence-foundation
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  system-test:
+    if: ${{ contains(github.event.head_commit.message, '[system-test]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      WRITE_TOKEN: ${{ secrets.WRITE_TOKEN }}
+      RADAR_ORIGIN: https://radar.rsymo.com
+    steps:
+      - name: Verify paper write secret exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${WRITE_TOKEN:-}" ]; then
+            echo "::error::WRITE_TOKEN is unavailable"
+            exit 1
+          fi
+
+      - name: Wait for deployed portfolio API
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 36); do
+            if curl --fail --silent --show-error "${RADAR_ORIGIN}/api/paper/portfolio" >/dev/null 2>&1; then
+              echo "Radar portfolio API is live."
+              exit 0
+            fi
+            echo "Waiting for new Radar deployment (${attempt}/36)..."
+            sleep 10
+          done
+          echo "::error::Timed out waiting for /api/paper/portfolio"
+          exit 1
+
+      - name: Open one isolated paper system-test position
+        shell: bash
+        run: |
+          set -euo pipefail
+          RESPONSE="$(curl --fail-with-body --silent --show-error \
+            -X POST "${RADAR_ORIGIN}/api/paper/system-test" \
+            -H "Authorization: Bearer ${WRITE_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data '{"max_debit_usd":200,"horizon_minutes":30}')"
+          printf '%s\n' "$RESPONSE" | tee /tmp/system-test.json
+
+      - name: Report system-test result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          if [ -f /tmp/system-test.json ]; then
+            BODY="$(cat /tmp/system-test.json)"
+            gh issue comment 1 --body "## Paper SYSTEM TEST result\n\n\`\`\`json\n${BODY}\n\`\`\`\n\nRun: ${RUN_URL}\n\nThis is an isolated mechanical paper test. It is excluded from strategy proof and no live-money execution is enabled."
+          else
+            gh issue comment 1 --body "❌ Paper SYSTEM TEST did not produce a response. Run: ${RUN_URL}. Strategy ledger and live-money boundary are unchanged."
+          fi
