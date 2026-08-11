@@ -174,7 +174,8 @@ function normalizeOption(
   const ask = finiteNumber(latestQuote?.ap ?? latestQuote?.ask_price);
   if (bid === null || ask === null || ask <= 0 || ask < bid) return null;
   const observedAt = stringValue(latestQuote?.t ?? latestQuote?.timestamp) ?? new Date().toISOString();
-  return {
+
+  const option: OptionCandidate = {
     contract_symbol: symbol,
     option_type: contract.type,
     strike,
@@ -185,14 +186,23 @@ function normalizeOption(
     bid,
     ask,
     mark: (bid + ask) / 2,
-    volume: finiteNumber(dailyBar?.v ?? dailyBar?.volume) ?? undefined,
-    open_interest: finiteNumber(contract.open_interest) ?? undefined,
-    implied_volatility: finiteNumber(snapshot.impliedVolatility ?? snapshot.implied_volatility) ?? undefined,
-    delta: finiteNumber(greeks?.delta) ?? undefined,
-    gamma: finiteNumber(greeks?.gamma) ?? undefined,
-    theta: finiteNumber(greeks?.theta) ?? undefined,
-    vega: finiteNumber(greeks?.vega) ?? undefined,
   };
+
+  const volume = finiteNumber(dailyBar?.v ?? dailyBar?.volume);
+  const openInterest = finiteNumber(contract.open_interest);
+  const impliedVolatility = finiteNumber(snapshot.impliedVolatility ?? snapshot.implied_volatility);
+  const delta = finiteNumber(greeks?.delta);
+  const gamma = finiteNumber(greeks?.gamma);
+  const theta = finiteNumber(greeks?.theta);
+  const vega = finiteNumber(greeks?.vega);
+  if (volume !== null) option.volume = volume;
+  if (openInterest !== null) option.open_interest = openInterest;
+  if (impliedVolatility !== null) option.implied_volatility = impliedVolatility;
+  if (delta !== null) option.delta = delta;
+  if (gamma !== null) option.gamma = gamma;
+  if (theta !== null) option.theta = theta;
+  if (vega !== null) option.vega = vega;
+  return option;
 }
 
 type TestCandidate = ScoredOption & { ticker: string; debit_usd: number };
