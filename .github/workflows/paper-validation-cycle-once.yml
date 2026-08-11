@@ -1,0 +1,73 @@
+name: Paper Validation Cycle Once
+
+on:
+  push:
+    branches:
+      - agent/paper-validation-cycle-once
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  run-paper-cycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      WRITE_TOKEN: ${{ secrets.WRITE_TOKEN }}
+      RADAR_ORIGIN: https://reddit-radar-options-intelligence.aphexflip.workers.dev
+    steps:
+      - name: Verify paper write secret exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${WRITE_TOKEN:-}" ]; then
+            echo "::error::WRITE_TOKEN is unavailable"
+            exit 1
+          fi
+
+      - name: Run one immediate autonomous paper cycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          RESPONSE="$(curl --fail-with-body --silent --show-error \
+            -X POST "${RADAR_ORIGIN}/api/run/paper-cycle" \
+            -H "Authorization: Bearer ${WRITE_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data '{"pulse_hours":1,"trend_limit":25,"candidate_limit":10,"signal_lookback_hours":6}')"
+          printf '%s\n' "$RESPONSE" | tee /tmp/paper-cycle.json
+          node - <<'NODE'
+          const fs = require('fs');
+          const x = JSON.parse(fs.readFileSync('/tmp/paper-cycle.json','utf8'));
+          const result = {
+            cycle_id: x.cycle_id,
+            started_at: x.started_at,
+            completed_at: x.completed_at,
+            candidates_seen: x.candidates_seen,
+            calls: x.calls,
+            puts: x.puts,
+            passes: x.passes,
+            paper_fills: x.paper_fills,
+            escalations: x.escalations,
+            errors: x.errors,
+            fills: (x.items || []).filter(i => i.execution_status === 'filled').map(i => ({ticker:i.ticker,recommendation:i.recommendation,prediction_id:i.prediction_id,paper_order_id:i.paper_order_id,execution_tier:i.execution_tier})),
+            non_pass_trade_decisions: (x.items || []).filter(i => i.recommendation === 'CALL' || i.recommendation === 'PUT').map(i => ({ticker:i.ticker,recommendation:i.recommendation,execution_status:i.execution_status,execution_tier:i.execution_tier,error:i.error}))
+          };
+          fs.writeFileSync('/tmp/paper-cycle-summary.json', JSON.stringify(result, null, 2));
+          console.log(JSON.stringify(result, null, 2));
+          NODE
+
+      - name: Report validation result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          if [ -f /tmp/paper-cycle-summary.json ]; then
+            BODY="$(cat /tmp/paper-cycle-summary.json)"
+            gh issue comment 1 --body "## Immediate paper validation cycle\n\n\`\`\`json\n${BODY}\n\`\`\`\n\nRun: ${RUN_URL}\n\nPaper simulation only; live broker execution remains disabled."
+          else
+            gh issue comment 1 --body "❌ Immediate paper validation cycle did not produce a summary. Run: ${RUN_URL}. Paper-only boundary unchanged."
+          fi
