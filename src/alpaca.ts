@@ -1,6 +1,6 @@
-import { generatePrediction } from "./engine";
+import { generatePrediction, ingestEvent } from "./engine";
 import { scheduleOutcomeTargets } from "./outcomes";
-import { scoreSignals, type OptionCandidate, type SignalForScoring } from "./scoring";
+import { scoreSignals, type DirectionHint, type OptionCandidate, type SignalForScoring } from "./scoring";
 
 export type AlpacaEnv = Env & {
   ALPACA_API_KEY_ID?: string;
@@ -38,6 +38,7 @@ type JsonRecord = Record<string, unknown>;
 
 const allowedStockFeeds = new Set(["iex", "sip", "delayed_sip", "boats", "overnight", "otc"]);
 const allowedOptionFeeds = new Set(["indicative", "opra"]);
+const clamp = (value: number, min = 0, max = 1): number => Math.max(min, Math.min(max, value));
 
 function finiteNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -87,6 +88,7 @@ function parseStockSnapshot(payload: JsonRecord) {
   const latestTrade = record(payload.latestTrade ?? payload.latest_trade);
   const latestQuote = record(payload.latestQuote ?? payload.latest_quote);
   const dailyBar = record(payload.dailyBar ?? payload.daily_bar);
+  const prevDailyBar = record(payload.prevDailyBar ?? payload.prev_daily_bar);
 
   const tradePrice = finiteNumber(latestTrade?.p ?? latestTrade?.price);
   const bid = finiteNumber(latestQuote?.bp ?? latestQuote?.bid_price);
@@ -107,7 +109,140 @@ function parseStockSnapshot(payload: JsonRecord) {
     ask,
     last: tradePrice,
     volume: finiteNumber(dailyBar?.v ?? dailyBar?.volume),
+    daily_open: finiteNumber(dailyBar?.o ?? dailyBar?.open),
+    daily_high: finiteNumber(dailyBar?.h ?? dailyBar?.high),
+    daily_low: finiteNumber(dailyBar?.l ?? dailyBar?.low),
+    previous_close: finiteNumber(prevDailyBar?.c ?? prevDailyBar?.close),
+    previous_volume: finiteNumber(prevDailyBar?.v ?? prevDailyBar?.volume),
   };
+}
+
+function percentMove(current: number, reference: number | null): number | null {
+  if (reference === null || reference <= 0) return null;
+  return ((current - reference) / reference) * 100;
+}
+
+function marketDirection(valuePct: number | null, deadZonePct = 0.10): DirectionHint {
+  if (valuePct === null || Math.abs(valuePct) < deadZonePct) return "neutral";
+  return valuePct > 0 ? "bullish" : "bearish";
+}
+
+async function marketEvidenceAlreadyIngested(env: Env, sourceEventId: string): Promise<boolean> {
+  const row = await env.DB.prepare(`
+    SELECT id FROM raw_events
+    WHERE source_id = 'source:alpaca-market' AND source_event_id = ?1
+    LIMIT 1
+  `).bind(sourceEventId).first<{ id: string }>();
+  return Boolean(row?.id);
+}
+
+async function ingestMarketEvidence(
+  env: AlpacaEnv,
+  ticker: string,
+  stock: ReturnType<typeof parseStockSnapshot>,
+  stockFeed: string,
+) {
+  const intradayPct = percentMove(stock.underlying_price, stock.daily_open);
+  const versusPrevClosePct = percentMove(stock.underlying_price, stock.previous_close);
+  const rangeBias = stock.daily_high !== null && stock.daily_low !== null && stock.daily_high > stock.daily_low
+    ? (((stock.underlying_price - stock.daily_low) / (stock.daily_high - stock.daily_low)) - 0.5) * 2
+    : null;
+  const volumeRatio = stock.volume !== null && stock.previous_volume !== null && stock.previous_volume > 0
+    ? stock.volume / stock.previous_volume
+    : null;
+
+  const signals: Array<{
+    signal_type: string;
+    numeric_value?: number;
+    normalized_value?: number;
+    baseline_value?: number;
+    unit?: string;
+    direction_hint: DirectionHint;
+    confidence: number;
+    metadata?: unknown;
+  }> = [];
+
+  if (intradayPct !== null) {
+    signals.push({
+      signal_type: "market_intraday_return",
+      numeric_value: intradayPct,
+      normalized_value: clamp(Math.abs(intradayPct) / 1.0),
+      baseline_value: 0,
+      unit: "percent",
+      direction_hint: marketDirection(intradayPct),
+      confidence: 0.82,
+      metadata: { reference: "daily_open", daily_open: stock.daily_open },
+    });
+  }
+
+  if (versusPrevClosePct !== null) {
+    signals.push({
+      signal_type: "market_vs_previous_close",
+      numeric_value: versusPrevClosePct,
+      normalized_value: clamp(Math.abs(versusPrevClosePct) / 1.25),
+      baseline_value: 0,
+      unit: "percent",
+      direction_hint: marketDirection(versusPrevClosePct),
+      confidence: 0.78,
+      metadata: { reference: "previous_close", previous_close: stock.previous_close },
+    });
+  }
+
+  if (rangeBias !== null) {
+    signals.push({
+      signal_type: "market_intraday_range_position",
+      numeric_value: rangeBias,
+      normalized_value: clamp(Math.abs(rangeBias)),
+      baseline_value: 0,
+      unit: "range_bias",
+      direction_hint: Math.abs(rangeBias) < 0.15 ? "neutral" : rangeBias > 0 ? "bullish" : "bearish",
+      confidence: 0.58,
+      metadata: { daily_high: stock.daily_high, daily_low: stock.daily_low },
+    });
+  }
+
+  if (volumeRatio !== null) {
+    signals.push({
+      signal_type: "market_volume_participation",
+      numeric_value: volumeRatio,
+      normalized_value: clamp(volumeRatio),
+      baseline_value: 1,
+      unit: "ratio_to_previous_day",
+      direction_hint: "neutral",
+      confidence: 0.62,
+      metadata: { current_volume: stock.volume, previous_volume: stock.previous_volume },
+    });
+  }
+
+  if (signals.length === 0) return { ingested: false, signal_count: 0 };
+
+  const sourceEventId = `alpaca-market:${ticker}:${stock.observed_at}`;
+  if (await marketEvidenceAlreadyIngested(env, sourceEventId)) {
+    return { ingested: false, duplicate: true, signal_count: signals.length };
+  }
+
+  const result = await ingestEvent(env, {
+    source: {
+      id: "source:alpaca-market",
+      source_type: "market_snapshot",
+      name: "Alpaca market snapshot",
+      provider: `alpaca:${stockFeed}`,
+      reliability_prior: 0.80,
+    },
+    source_event_id: sourceEventId,
+    event_type: "market_snapshot_features",
+    event_time: stock.observed_at,
+    title: `${ticker} point-in-time market features`,
+    ticker,
+    signals,
+    metadata: {
+      underlying_price: stock.underlying_price,
+      stock_feed: stockFeed,
+      feature_version: "market-v0.2",
+    },
+  });
+
+  return { ingested: true, signal_count: signals.length, event_id: result.event_id };
 }
 
 function parseOptionSnapshot(
@@ -269,6 +404,7 @@ export async function alpacaPredict(env: AlpacaEnv, input: AlpacaPredictInput) {
     headers,
   );
   const stock = parseStockSnapshot(stockPayload);
+  const marketEvidence = await ingestMarketEvidence(env, ticker, stock, stockFeed);
   const signalContext = await recentSignalScore(env, ticker, lookbackHours);
 
   const options: OptionCandidate[] = [];
@@ -327,7 +463,9 @@ export async function alpacaPredict(env: AlpacaEnv, input: AlpacaPredictInput) {
   return {
     ...prediction,
     outcome_targets_scheduled: outcomeTargets.length,
-    market_adapter: "alpaca-v0.1",
+    market_adapter: "alpaca-v0.2",
+    market_evidence: marketEvidence,
+    pre_chain_signal_score: signalContext.score,
     stock_feed: stockFeed,
     option_feed: optionFeed,
     options_normalized: options.length,
