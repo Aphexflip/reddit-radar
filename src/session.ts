@@ -39,6 +39,12 @@ type CycleItemRow = {
   execution_tier: string | null;
   error_message: string | null;
   created_at: string;
+  prediction_direction: string | null;
+  prediction_confidence: number | null;
+  underlying_opportunity_score: number | null;
+  option_expression_score: number | null;
+  data_quality: number | null;
+  rationale_json: string | null;
 };
 
 type PaperOrderRow = {
@@ -65,6 +71,16 @@ type RiskStateRow = {
   updated_at: string;
 };
 
+type ParsedRationale = {
+  reasons?: unknown;
+  signal_score?: {
+    directionalScore?: unknown;
+    confidence?: unknown;
+    dataQuality?: unknown;
+    opportunityScore?: unknown;
+  };
+};
+
 function marketDate(now = new Date()): string {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
@@ -74,6 +90,20 @@ function marketDate(now = new Date()): string {
   }).formatToParts(now);
   const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${value.year}-${value.month}-${value.day}`;
+}
+
+function parseRationale(value: string | null): ParsedRationale | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? parsed as ParsedRationale : null;
+  } catch {
+    return null;
+  }
+}
+
+function finiteOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 export async function paperSessionStatus(env: Env): Promise<Record<string, unknown>> {
@@ -104,12 +134,20 @@ export async function paperSessionStatus(env: Env): Promise<Record<string, unkno
     env.DB.prepare(`
       SELECT pci.cycle_run_id, pci.rank, pci.ticker, pci.smart_score, pci.prediction_id,
              pci.recommendation_type, pci.estimated_ev_score, pci.paper_order_id,
-             pci.execution_status, pci.execution_tier, pci.error_message, pci.created_at
+             pci.execution_status, pci.execution_tier, pci.error_message, pci.created_at,
+             p.direction AS prediction_direction,
+             p.confidence AS prediction_confidence,
+             r.underlying_opportunity_score,
+             r.option_expression_score,
+             r.data_quality,
+             r.rationale_json
       FROM paper_cycle_items pci
       JOIN paper_cycle_runs pcr ON pcr.id = pci.cycle_run_id
+      LEFT JOIN predictions p ON p.id = pci.prediction_id
+      LEFT JOIN recommendations r ON r.id = p.recommendation_id
       WHERE date(pcr.started_at) = ?
       ORDER BY pci.created_at DESC, pci.rank ASC
-      LIMIT 50
+      LIMIT 100
     `).bind(tradingDate).all<CycleItemRow>(),
     env.DB.prepare(`
       SELECT id, prediction_id, contract_symbol, quantity, limit_price, notional_usd,
@@ -140,6 +178,49 @@ export async function paperSessionStatus(env: Env): Promise<Record<string, unkno
     errors: 0,
   };
 
+  const decisions = itemsResult.results.map((item) => {
+    const rationale = parseRationale(item.rationale_json);
+    return {
+      cycle_run_id: item.cycle_run_id,
+      rank: item.rank,
+      ticker: item.ticker,
+      smart_score: item.smart_score,
+      prediction_id: item.prediction_id,
+      recommendation_type: item.recommendation_type,
+      prediction_direction: item.prediction_direction,
+      prediction_confidence: item.prediction_confidence,
+      underlying_opportunity_score: item.underlying_opportunity_score,
+      option_expression_score: item.option_expression_score,
+      estimated_ev_score: item.estimated_ev_score,
+      data_quality: item.data_quality,
+      scoring: rationale?.signal_score ?? null,
+      reasons: Array.isArray(rationale?.reasons) ? rationale.reasons.map(String) : [],
+      paper_order_id: item.paper_order_id,
+      execution_status: item.execution_status,
+      execution_tier: item.execution_tier,
+      error_message: item.error_message,
+      created_at: item.created_at,
+    };
+  });
+
+  const latestCycleDecisions = latestCycle
+    ? decisions.filter((item) => item.cycle_run_id === latestCycle.id)
+    : [];
+
+  const closestToGate = latestCycleDecisions
+    .map((item) => ({
+      ticker: item.ticker,
+      smart_score: item.smart_score,
+      opportunity_score: finiteOrNull(item.underlying_opportunity_score),
+      directional_score: finiteOrNull(item.scoring?.directionalScore),
+      confidence: finiteOrNull(item.prediction_confidence),
+      data_quality: finiteOrNull(item.data_quality),
+      recommendation: item.recommendation_type,
+      reasons: item.reasons,
+    }))
+    .sort((a, b) => (b.opportunity_score ?? -1) - (a.opportunity_score ?? -1))
+    .slice(0, 10);
+
   return {
     trading_date: tradingDate,
     execution_mode: env.EXECUTION_MODE,
@@ -154,8 +235,17 @@ export async function paperSessionStatus(env: Env): Promise<Record<string, unkno
       new_positions_blocked: Boolean(riskState?.new_positions_blocked),
       block_reason: riskState?.block_reason ?? null,
     },
+    decision_gate: {
+      minimum_underlying_opportunity_score: 0.60,
+      minimum_absolute_directional_score: 0.20,
+      note: "These are v0.1 research gates. They are not profitability-calibrated thresholds yet.",
+    },
     latest_cycle: latestCycle,
-    latest_decisions: itemsResult.results,
+    latest_cycle_diagnostics: {
+      decisions: latestCycleDecisions.length,
+      closest_to_underlying_gate: closestToGate,
+    },
+    latest_decisions: decisions,
     latest_paper_orders: ordersResult.results,
     risk_state: riskState,
   };
