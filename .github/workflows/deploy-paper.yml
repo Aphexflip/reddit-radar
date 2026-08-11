@@ -180,6 +180,23 @@ jobs:
             printf '%s' "$PULSE_API_TOKEN" | npx wrangler secret put PULSE_API_TOKEN --config .wrangler.deploy.jsonc
           fi
 
+      - name: Run isolated paper SYSTEM TEST
+        if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[system-test]') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RADAR_ORIGIN: https://radar.rsymo.com
+        shell: bash
+        run: |
+          set -euo pipefail
+          RESPONSE="$(curl --fail-with-body --silent --show-error \
+            -X POST "${RADAR_ORIGIN}/api/paper/system-test" \
+            -H "Authorization: Bearer ${WRITE_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data '{"max_debit_usd":200,"horizon_minutes":30}')"
+          printf '%s\n' "$RESPONSE" | tee /tmp/system-test.json
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          gh issue comment 1 --body "## Paper SYSTEM TEST result\n\n\`\`\`json\n${RESPONSE}\n\`\`\`\n\nRun: ${RUN_URL}\n\nThis is an isolated mechanical paper test. It is excluded from strategy proof; live-money execution remains disabled."
+
       - name: Deployment boundary summary
         run: |
           echo "Paper Worker deployed with Radar D1, read-only Pulse D1 binding, R2, and runtime secrets."
