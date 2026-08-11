@@ -11,6 +11,12 @@
   "triggers": {
     "crons": ["*/15 13-22 * * 1-5"]
   },
+  "routes": [
+    {
+      "pattern": "radar.rsymo.com",
+      "custom_domain": true
+    }
+  ],
   "vars": {
     "SYSTEM_VERSION": "0.1.0",
     "EXECUTION_MODE": "paper",
