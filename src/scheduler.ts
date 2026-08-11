@@ -1,12 +1,14 @@
 import { runAutonomousPaperCycle, type AutonomousPaperEnv } from "./cycle";
 import { getUsMarketClock, paperEntryGate, type AlpacaClock } from "./market";
 import { collectDueOutcomes } from "./outcomes";
+import { maintainSystemTestPositions } from "./system-test";
 
 export { getUsMarketClock, paperEntryGate } from "./market";
 
 export interface ScheduledTickSummary {
   timestamp: string;
   outcome_collection: Awaited<ReturnType<typeof collectDueOutcomes>> | null;
+  system_test_positions: Awaited<ReturnType<typeof maintainSystemTestPositions>> | null;
   market_clock: AlpacaClock | null;
   paper_cycle: Awaited<ReturnType<typeof runAutonomousPaperCycle>> | null;
   new_entries_skipped_reason: string | null;
@@ -18,6 +20,7 @@ export async function runScheduledPaperTick(
 ): Promise<ScheduledTickSummary> {
   const errors: string[] = [];
   let outcomeCollection: Awaited<ReturnType<typeof collectDueOutcomes>> | null = null;
+  let systemTestPositions: Awaited<ReturnType<typeof maintainSystemTestPositions>> | null = null;
   let marketClock: AlpacaClock | null = null;
   let paperCycle: Awaited<ReturnType<typeof runAutonomousPaperCycle>> | null = null;
   let newEntriesSkippedReason: string | null = null;
@@ -26,6 +29,12 @@ export async function runScheduledPaperTick(
     outcomeCollection = await collectDueOutcomes(env, 50);
   } catch (error) {
     errors.push(`outcome collection: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  try {
+    systemTestPositions = await maintainSystemTestPositions(env);
+  } catch (error) {
+    errors.push(`system test positions: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   try {
@@ -53,6 +62,7 @@ export async function runScheduledPaperTick(
   return {
     timestamp: new Date().toISOString(),
     outcome_collection: outcomeCollection,
+    system_test_positions: systemTestPositions,
     market_clock: marketClock,
     paper_cycle: paperCycle,
     new_entries_skipped_reason: newEntriesSkippedReason,
