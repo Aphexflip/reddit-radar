@@ -3,7 +3,9 @@ name: Paper Validation Cycle Once
 on:
   push:
     branches:
-      - agent/paper-validation-cycle-once
+      - agent/v01-options-intelligence-foundation
+    paths:
+      - .github/workflows/paper-validation-cycle-once.yml
 
 permissions:
   contents: read
