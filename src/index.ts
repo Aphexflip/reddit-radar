@@ -20,6 +20,7 @@ import { collectDueOutcomes } from "./outcomes";
 import { executeTieredPaperPrediction } from "./paper";
 import { proofSummary } from "./proof";
 import { syncPulseTrends, type PulseSyncInput } from "./pulse";
+import { researchStatus } from "./research";
 import { runScheduledPaperTick } from "./scheduler";
 import { pollSecSubmissions, type SecPollInput } from "./sec";
 
@@ -124,6 +125,10 @@ export default {
 
       if (url.pathname === "/api/proof" && request.method === "GET") {
         return json(await proofSummary(env));
+      }
+
+      if (url.pathname === "/api/research/status" && request.method === "GET") {
+        return json(await researchStatus(env));
       }
 
       if (isWriteMethod(request.method) && url.pathname.startsWith("/api/")) {
