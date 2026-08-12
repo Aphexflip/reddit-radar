@@ -63,35 +63,31 @@ jobs:
             -H "APCA-API-KEY-ID: ${ALPACA_API_KEY_ID}" \
             -H "APCA-API-SECRET-KEY: ${ALPACA_API_SECRET_KEY}" \
             -H "Accept: application/json")"
-          printf '%s' "$ACCOUNT_JSON" | node - <<'NODE'
-          let data = '';
-          process.stdin.on('data', chunk => data += chunk);
-          process.stdin.on('end', () => {
-            const account = JSON.parse(data);
-            const status = String(account.status || 'unknown');
-            const blocked = Boolean(account.trading_blocked || account.trade_suspended_by_user);
-            const level = Number(account.options_trading_level ?? 0);
-            const optionsBuyingPower = Number(account.options_buying_power ?? 0);
-            if (status !== 'ACTIVE') {
-              console.error(`::error::Alpaca PAPER account is not ACTIVE (status=${status})`);
-              process.exit(1);
-            }
-            if (blocked) {
-              console.error('::error::Alpaca PAPER account reports trading blocked/suspended');
-              process.exit(1);
-            }
-            if (!Number.isFinite(level) || level < 2) {
-              console.error(`::error::Alpaca PAPER options trading level ${level} cannot buy long options`);
-              process.exit(1);
-            }
-            console.log(JSON.stringify({
-              alpaca_paper_account: 'authenticated',
-              status,
-              options_trading_level: level,
-              options_buying_power_available: Number.isFinite(optionsBuyingPower) && optionsBuyingPower > 0,
-              live_money_endpoint_used: false
-            }));
-          });
+          ACCOUNT_JSON="$ACCOUNT_JSON" node - <<'NODE'
+          const account = JSON.parse(process.env.ACCOUNT_JSON || '{}');
+          const status = String(account.status || 'unknown');
+          const blocked = Boolean(account.trading_blocked || account.trade_suspended_by_user);
+          const level = Number(account.options_trading_level ?? 0);
+          const optionsBuyingPower = Number(account.options_buying_power ?? 0);
+          if (status !== 'ACTIVE') {
+            console.error(`::error::Alpaca PAPER account is not ACTIVE (status=${status})`);
+            process.exit(1);
+          }
+          if (blocked) {
+            console.error('::error::Alpaca PAPER account reports trading blocked/suspended');
+            process.exit(1);
+          }
+          if (!Number.isFinite(level) || level < 2) {
+            console.error(`::error::Alpaca PAPER options trading level ${level} cannot buy long options`);
+            process.exit(1);
+          }
+          console.log(JSON.stringify({
+            alpaca_paper_account: 'authenticated',
+            status,
+            options_trading_level: level,
+            options_buying_power_available: Number.isFinite(optionsBuyingPower) && optionsBuyingPower > 0,
+            live_money_endpoint_used: false
+          }));
           NODE
 
       - name: Validate build before touching Cloudflare
