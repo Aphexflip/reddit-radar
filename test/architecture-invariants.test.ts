@@ -103,7 +103,7 @@ describe("Radar repository continuity contract", () => {
   it("keeps direct Pulse D1 access read-only", () => {
     const pulse = read("src/pulse.ts");
     const statements = [...pulse.matchAll(/PULSE_DB\.prepare\(\s*`([\s\S]*?)`\s*\)/g)]
-      .map((match) => match[1].trim());
+      .map((match) => (match[1] ?? "").trim());
 
     expect(statements.length).toBeGreaterThan(0);
     for (const sql of statements) {
@@ -135,8 +135,8 @@ describe("Radar repository continuity contract", () => {
     }
 
     const laterPolicyMutations = readdirSync(resolve(ROOT, "migrations"))
-      .filter((name) => name.endsWith(".sql") && name > "0011_restore_standard_paper_policy.sql")
-      .filter((name) => /\bexecution_policies\b/i.test(read(`migrations/${name}`)));
+      .filter((name: string) => name.endsWith(".sql") && name > "0011_restore_standard_paper_policy.sql")
+      .filter((name: string) => /\bexecution_policies\b/i.test(read(`migrations/${name}`)));
 
     expect(
       laterPolicyMutations,
