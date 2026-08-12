@@ -1,5 +1,5 @@
 import { alpacaPredict, type AlpacaEnv } from "./alpaca";
-import { executeTieredPaperPredictionV02 } from "./paper-v02";
+import { executeTieredPaperPredictionV03 } from "./paper-v03";
 import { syncPulseTrends, type PulseEnv } from "./pulse";
 
 export type AutonomousPaperEnv = AlpacaEnv & PulseEnv;
@@ -113,7 +113,7 @@ export async function runAutonomousPaperCycle(
         else passes += 1;
 
         if ((recommendation === "CALL" || recommendation === "PUT") && predictionId) {
-          const execution = await executeTieredPaperPredictionV02(env, predictionId);
+          const execution = await executeTieredPaperPredictionV03(env, predictionId);
           executionStatus = "status" in execution ? String(execution.status) : null;
           executionTier = "tier" in execution && execution.tier !== undefined
             ? String(execution.tier)
@@ -197,9 +197,9 @@ export async function runAutonomousPaperCycle(
       errors,
       items,
       execution_mode: "paper",
-      execution_selector: "budget_aware_v0.2",
+      execution_selector: "budget_aware_v0.3_brokered",
       live_trading_enabled: false,
-      note: "Research contract ranking remains budget-independent. Paper execution separately chooses the highest-quality qualifying contract inside the active single-trade cap, then applies the unchanged risk policy. All fills remain paper records.",
+      note: "Research contract ranking remains budget-independent. Eligible strategy orders route through the configured paper broker mode; alpaca_paper uses only Alpaca's PAPER Trading API and broker fills are reconciled separately from historical research references.",
     };
 
     await env.DB.prepare(`
