@@ -3,11 +3,18 @@ import { decideOpportunity, scoreSignals, type OptionCandidate, type SignalForSc
 
 const now = "2026-08-10T20:00:00.000Z";
 
-function signal(id: string, direction_hint: "bullish" | "bearish", strength: number, confidence = 0.9): SignalForScoring {
+function signal(
+  id: string,
+  direction_hint: "bullish" | "bearish",
+  strength: number,
+  confidence = 0.9,
+  signalType = id,
+  observedAt = now,
+): SignalForScoring {
   return {
     id,
-    signal_type: "test_signal",
-    observed_at: now,
+    signal_type: signalType,
+    observed_at: observedAt,
     normalized_value: strength,
     direction_hint,
     confidence,
@@ -49,6 +56,7 @@ describe("signal scoring", () => {
     expect(result.directionalScore).toBeGreaterThan(0.45);
     expect(result.opportunityScore).toBeGreaterThan(0.60);
     expect(result.bullishSignalIds).toHaveLength(3);
+    expect(result.effectiveSignalCount).toBe(4);
   });
 
   it("does not let neutral context dilute a directional signal", () => {
@@ -77,6 +85,37 @@ describe("signal scoring", () => {
 
     expect(withContext.directionalScore).toBeCloseTo(base.directionalScore, 8);
     expect(withContext.dataQuality).toBeGreaterThan(base.dataQuality);
+  });
+
+  it("uses only the newest observation for a repeated feature type", () => {
+    const result = scoreSignals([
+      signal("old-bull", "bullish", 1, 1, "market_intraday_return", "2026-08-10T19:30:00.000Z"),
+      signal("new-bear", "bearish", 0.8, 1, "market_intraday_return", "2026-08-10T20:00:00.000Z"),
+    ]);
+
+    expect(result.rawSignalCount).toBe(2);
+    expect(result.effectiveSignalCount).toBe(1);
+    expect(result.bearishSignalIds).toEqual(["new-bear"]);
+    expect(result.bullishSignalIds).toEqual([]);
+    expect(result.directionalScore).toBeLessThan(-0.7);
+  });
+
+  it("does not manufacture data quality by polling one feature repeatedly", () => {
+    const repeated = Array.from({ length: 20 }, (_, index) =>
+      signal(
+        `repeat-${index}`,
+        "bullish",
+        0.7,
+        0.9,
+        "reddit_sentiment_now",
+        new Date(Date.parse(now) - ((19 - index) * 60_000)).toISOString(),
+      ));
+    const repeatedScore = scoreSignals(repeated);
+    const singleScore = scoreSignals([repeated[19]!]);
+
+    expect(repeatedScore.effectiveSignalCount).toBe(1);
+    expect(repeatedScore.dataQuality).toBeCloseTo(singleScore.dataQuality, 8);
+    expect(repeatedScore.opportunityScore).toBeCloseTo(singleScore.opportunityScore, 8);
   });
 
   it("passes on weak conflicting evidence", () => {
