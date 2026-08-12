@@ -1,0 +1,140 @@
+name: Live Paper Smoke Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/v01-options-intelligence-foundation
+    paths:
+      - .github/workflows/smoke-live.yml
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      BASE_URL: https://reddit-radar-options-intelligence.aphexflip.workers.dev
+      WRITE_TOKEN: ${{ secrets.WRITE_TOKEN }}
+    steps:
+      - name: Check live health
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS "$BASE_URL/api/health" -o health.json
+          node - <<'NODE'
+          const fs = require('fs');
+          const h = JSON.parse(fs.readFileSync('health.json','utf8'));
+          console.log(JSON.stringify(h, null, 2));
+          if (!h.ok) throw new Error('health check not ok');
+          if (h.execution_mode !== 'paper') throw new Error('execution mode is not paper');
+          if (h.live_trading_enabled !== false) throw new Error('live trading unexpectedly enabled');
+          if (!h.alpaca_configured) throw new Error('Alpaca not configured');
+          if (!h.autonomous_paper_cycle_ready) throw new Error('paper cycle not ready');
+          NODE
+
+      - name: Sync real Reddit Pulse evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$WRITE_TOKEN"
+          status="$(curl -sS \
+            -X POST "$BASE_URL/api/pulse/sync" \
+            -H "Authorization: Bearer $WRITE_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data '{"hours":1,"limit":25}' \
+            -o pulse.json \
+            -w '%{http_code}')"
+          echo "Pulse sync HTTP status: $status"
+          cat pulse.json
+          echo
+          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+            exit 1
+          fi
+          node - <<'NODE'
+          const fs = require('fs');
+          const p = JSON.parse(fs.readFileSync('pulse.json','utf8'));
+          const rows = Array.isArray(p.results) ? p.results : [];
+          console.log(JSON.stringify({
+            source: p.source,
+            source_mode: p.source_mode,
+            checked_stock_trends: p.checked_stock_trends,
+            ingested: p.ingested,
+            duplicates: p.duplicates,
+            top_results: rows.slice(0,5)
+          }, null, 2));
+          if (!rows.length || !rows[0].ticker) throw new Error('Pulse returned no stock ticker for smoke test');
+          fs.appendFileSync(process.env.GITHUB_ENV, `TEST_TICKER=${rows[0].ticker}\n`);
+          NODE
+
+      - name: Create safe research prediction for top Pulse ticker
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$TEST_TICKER"
+          status="$(curl -sS \
+            -X POST "$BASE_URL/api/alpaca/predict" \
+            -H "Authorization: Bearer $WRITE_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data "{\"ticker\":\"$TEST_TICKER\",\"horizon_minutes\":1440,\"lookback_hours\":6}" \
+            -o prediction.json \
+            -w '%{http_code}')"
+          echo "Prediction HTTP status: $status"
+          cat prediction.json
+          echo
+          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+            exit 1
+          fi
+          node - <<'NODE'
+          const fs = require('fs');
+          const p = JSON.parse(fs.readFileSync('prediction.json','utf8'));
+          console.log(JSON.stringify({
+            prediction_id: p.prediction_id,
+            ticker: p.ticker,
+            recommendation: p.recommendation,
+            opportunity_score: p.opportunity_score,
+            directional_score: p.directional_score,
+            estimated_ev_score: p.estimated_ev_score,
+            selected_contract: p.selected_contract ?? null,
+            options_normalized: p.options_normalized,
+            directional_chain_requested: p.directional_chain_requested,
+            outcome_targets_scheduled: p.outcome_targets_scheduled,
+            stock_feed: p.stock_feed,
+            option_feed: p.option_feed,
+            feed_warning: p.feed_warning
+          }, null, 2));
+          if (!p.prediction_id) throw new Error('prediction was not created');
+          if (!['CALL','PUT','PASS'].includes(p.recommendation)) throw new Error('unexpected recommendation');
+          NODE
+
+      - name: Read live opportunity and proof ledgers
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS "$BASE_URL/api/opportunities?limit=5" -o opportunities.json
+          curl -fsS "$BASE_URL/api/proof" -o proof.json
+          node - <<'NODE'
+          const fs = require('fs');
+          const opp = JSON.parse(fs.readFileSync('opportunities.json','utf8'));
+          const proof = JSON.parse(fs.readFileSync('proof.json','utf8'));
+          console.log('OPPORTUNITIES');
+          console.log(JSON.stringify(opp, null, 2));
+          console.log('PROOF');
+          console.log(JSON.stringify(proof, null, 2));
+          NODE
+
+      - name: Report smoke result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          if [ "${{ job.status }}" = "success" ]; then
+            gh issue comment 1 --repo "$GITHUB_REPOSITORY" --body "✅ LIVE SMOKE TEST PASSED — deployed Worker health, direct Reddit Pulse D1 evidence sync, Alpaca research prediction on the top Pulse ticker, opportunities ledger, and proof ledger all responded. No paper execution endpoint was called, so no after-hours simulated fill was created. Run: ${RUN_URL}"
+          else
+            gh issue comment 1 --repo "$GITHUB_REPOSITORY" --body "❌ LIVE SMOKE TEST FAILED — app-only evidence-first smoke test failed. No paper execution endpoint was called. Run: ${RUN_URL}"
+          fi

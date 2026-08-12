@@ -1,0 +1,63 @@
+name: Pulse D1 Readonly Diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/v01-options-intelligence-foundation
+    paths:
+      - .github/workflows/pulse-d1-readonly.yml
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PULSE_DB_ID: 46d471aa-70b7-42f2-a290-f3d264d6dcbc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+
+      - name: Resolve Pulse D1 database
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler d1 list --json > d1-list.json
+          node - <<'NODE'
+          const fs = require('fs');
+          const rows = JSON.parse(fs.readFileSync('d1-list.json','utf8'));
+          console.log('Accessible D1 databases:', rows.map(r => ({name:r.name, uuid:r.uuid})));
+          const row = rows.find(r => r.uuid === process.env.PULSE_DB_ID);
+          if (!row) throw new Error('Pulse D1 UUID not found in this Cloudflare account');
+          fs.appendFileSync(process.env.GITHUB_ENV, `PULSE_DB_NAME=${row.name}\n`);
+          console.log('Resolved Pulse DB:', row.name);
+          NODE
+
+      - name: Read Pulse schema only
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute "$PULSE_DB_NAME" --remote --command "SELECT name, type, sql FROM sqlite_master WHERE type IN ('table','view') ORDER BY name;" --json > pulse-schema.json
+          cat pulse-schema.json
+
+      - name: Report diagnostic completion
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          if [ "${{ job.status }}" = "success" ]; then
+            gh issue comment 1 --repo "$GITHUB_REPOSITORY" --body "✅ PULSE D1 READONLY DIAGNOSTIC PASSED — current Pulse D1 was resolved and its schema was read without modifying data. Run: ${RUN_URL}"
+          else
+            gh issue comment 1 --repo "$GITHUB_REPOSITORY" --body "❌ PULSE D1 READONLY DIAGNOSTIC FAILED — no Pulse data was modified. Run: ${RUN_URL}"
+          fi

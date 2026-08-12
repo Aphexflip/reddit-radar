@@ -1,0 +1,21 @@
+# Copy to .dev.vars for local development only.
+# Never commit real credentials or personal contact values.
+WRITE_TOKEN=replace-with-a-long-random-secret
+
+# Proven Pulse Markets backend. Override only when deliberately testing another backend.
+PULSE_API_ORIGIN=https://redditpulse-v0.aphexflip.workers.dev
+# PULSE_API_TOKEN=replace-if-pulse-backend-is-later-protected
+
+# SEC asks automated clients to identify themselves with organization/app + monitored contact.
+SEC_USER_AGENT=RSYMO Reddit Radar your-monitored-contact@example.com
+
+# Alpaca credentials. Radar's broker adapter is hard-coded to Alpaca PAPER only.
+ALPACA_API_KEY_ID=replace-with-paper-key-id
+ALPACA_API_SECRET_KEY=replace-with-paper-secret
+
+# local_sim keeps deterministic D1 fills; alpaca_paper submits actual paper orders.
+BROKER_MODE=local_sim
+
+# Free defaults are IEX equities + indicative options. Indicative options are paper-only.
+ALPACA_STOCK_FEED=iex
+ALPACA_OPTION_FEED=indicative
