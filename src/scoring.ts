@@ -38,6 +38,9 @@ export interface SignalScore {
   bullishSignalIds: string[];
   bearishSignalIds: string[];
   neutralSignalIds: string[];
+  rawSignalCount: number;
+  effectiveSignalCount: number;
+  effectiveSignalTypes: string[];
 }
 
 export interface ScoredOption {
@@ -83,8 +86,44 @@ const directionSign = (direction: DirectionHint | null): number => {
   return 0;
 };
 
+function observedTime(signal: SignalForScoring): number {
+  const parsed = Date.parse(signal.observed_at);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/**
+ * A rolling data collector can emit the same feature type many times during the
+ * scoring lookback. Those observations remain immutable evidence, but they are
+ * not independent votes. For a point-in-time decision we use the newest value
+ * for each feature type so polling frequency cannot manufacture confidence.
+ */
+export function latestSignalPerType(signals: SignalForScoring[]): SignalForScoring[] {
+  const latest = new Map<string, SignalForScoring>();
+
+  for (const signal of signals) {
+    const type = signal.signal_type.trim() || "unknown";
+    const existing = latest.get(type);
+    if (!existing) {
+      latest.set(type, signal);
+      continue;
+    }
+
+    const candidateTime = observedTime(signal);
+    const existingTime = observedTime(existing);
+    if (
+      candidateTime > existingTime ||
+      (candidateTime === existingTime && signal.confidence > existing.confidence)
+    ) {
+      latest.set(type, signal);
+    }
+  }
+
+  return [...latest.values()].sort((a, b) => observedTime(b) - observedTime(a));
+}
+
 export function scoreSignals(signals: SignalForScoring[]): SignalScore {
-  if (signals.length === 0) {
+  const effectiveSignals = latestSignalPerType(signals);
+  if (effectiveSignals.length === 0) {
     return {
       directionalScore: 0,
       confidence: 0,
@@ -93,6 +132,9 @@ export function scoreSignals(signals: SignalForScoring[]): SignalScore {
       bullishSignalIds: [],
       bearishSignalIds: [],
       neutralSignalIds: [],
+      rawSignalCount: signals.length,
+      effectiveSignalCount: 0,
+      effectiveSignalTypes: [],
     };
   }
 
@@ -103,7 +145,7 @@ export function scoreSignals(signals: SignalForScoring[]): SignalScore {
   const bearishSignalIds: string[] = [];
   const neutralSignalIds: string[] = [];
 
-  for (const signal of signals) {
+  for (const signal of effectiveSignals) {
     const confidence = clamp(signal.confidence);
     const sign = directionSign(signal.direction_hint);
     const strength = signal.normalized_value === null
@@ -124,8 +166,8 @@ export function scoreSignals(signals: SignalForScoring[]): SignalScore {
   const directionalScore = directionalConfidenceWeight > 0
     ? clamp(weightedDirection / directionalConfidenceWeight, -1, 1)
     : 0;
-  const averageConfidence = confidenceTotal / signals.length;
-  const evidenceDepth = clamp(signals.length / 6);
+  const averageConfidence = confidenceTotal / effectiveSignals.length;
+  const evidenceDepth = clamp(effectiveSignals.length / 6);
   const dataQuality = clamp((0.55 * averageConfidence) + (0.45 * evidenceDepth));
   const confidence = clamp((0.60 * Math.abs(directionalScore)) + (0.40 * averageConfidence));
   const opportunityScore = clamp(
@@ -142,6 +184,9 @@ export function scoreSignals(signals: SignalForScoring[]): SignalScore {
     bullishSignalIds,
     bearishSignalIds,
     neutralSignalIds,
+    rawSignalCount: signals.length,
+    effectiveSignalCount: effectiveSignals.length,
+    effectiveSignalTypes: effectiveSignals.map((signal) => signal.signal_type),
   };
 }
 
@@ -202,7 +247,7 @@ export function decideOpportunity(
   const opportunityThreshold = clamp(policy.opportunityThreshold);
   const directionalThreshold = clamp(policy.directionalThreshold);
 
-  if (signals.length === 0) {
+  if (signalScore.effectiveSignalCount === 0) {
     reasons.push("No timestamped signals are available for the entity.");
     return {
       recommendation: "PASS",
@@ -270,7 +315,8 @@ export function decideOpportunity(
   const moonshotScore = clamp((0.65 * estimatedEvScore) + (0.35 * leverageProxy));
 
   reasons.push(
-    `${signals.length} timestamped signal(s) clear the ${policy.lane ?? "strategy"} evidence gate.`,
+    `${signalScore.effectiveSignalCount} distinct timestamped signal type(s) clear the ${policy.lane ?? "strategy"} evidence gate ` +
+    `(${signalScore.rawSignalCount} raw observations in lookback).`,
   );
   reasons.push(`Selected ${selectedOption.option.contract_symbol} after liquidity, spread, delta, DTE${maxDebit === undefined ? "" : ", and exploration debit"} gates.`);
 
