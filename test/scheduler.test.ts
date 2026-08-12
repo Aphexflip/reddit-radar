@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { paperEntryGate } from "../src/scheduler";
+import { decisionCycleDue, paperEntryGate } from "../src/scheduler";
 
 describe("scheduled paper entry gate", () => {
   it("blocks new entries when the market is closed", () => {
@@ -37,5 +37,21 @@ describe("scheduled paper entry gate", () => {
       allowed: false,
       reason: "30 minutes or less remain before the regular market close",
     });
+  });
+});
+
+describe("decision cadence", () => {
+  const now = Date.parse("2026-08-12T14:00:00.000Z");
+
+  it("runs when there has never been a decision cycle", () => {
+    expect(decisionCycleDue(null, now)).toBe(true);
+  });
+
+  it("keeps a 5-minute heartbeat from creating a new full prediction cycle", () => {
+    expect(decisionCycleDue("2026-08-12T13:55:00.000Z", now)).toBe(false);
+  });
+
+  it("allows a new full cycle after the cadence window", () => {
+    expect(decisionCycleDue("2026-08-12T13:45:00.000Z", now)).toBe(true);
   });
 });
