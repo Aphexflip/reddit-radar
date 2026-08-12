@@ -129,13 +129,15 @@ describe("signal scoring", () => {
 });
 
 describe("option selection", () => {
+  const strongBullish = [
+    signal("a", "bullish", 0.95),
+    signal("b", "bullish", 0.85),
+    signal("c", "bullish", 0.80),
+    signal("d", "bullish", 0.70),
+  ];
+
   it("selects a liquid call for a strong bullish thesis", () => {
-    const result = decideOpportunity([
-      signal("a", "bullish", 0.95),
-      signal("b", "bullish", 0.85),
-      signal("c", "bullish", 0.80),
-      signal("d", "bullish", 0.70),
-    ], [option()], now);
+    const result = decideOpportunity(strongBullish, [option()], now);
 
     expect(result.recommendation).toBe("CALL");
     expect(result.selectedOption?.option.contract_symbol).toBe("XYZ260904C00100000");
@@ -143,12 +145,9 @@ describe("option selection", () => {
   });
 
   it("returns PASS instead of forcing a bad illiquid option", () => {
-    const result = decideOpportunity([
-      signal("a", "bullish", 0.95),
-      signal("b", "bullish", 0.85),
-      signal("c", "bullish", 0.80),
-      signal("d", "bullish", 0.70),
-    ], [option({ bid: 0.20, ask: 1.00, open_interest: 2, volume: 0 })], now);
+    const result = decideOpportunity(strongBullish, [
+      option({ bid: 0.20, ask: 1.00, open_interest: 2, volume: 0 }),
+    ], now);
 
     expect(result.direction).toBe("bullish");
     expect(result.recommendation).toBe("PASS");
@@ -165,5 +164,41 @@ describe("option selection", () => {
 
     expect(result.recommendation).toBe("PUT");
     expect(result.selectedOption?.option.option_type).toBe("put");
+  });
+
+  it("can preserve the thesis while selecting a cheaper qualifying contract under a debit cap", () => {
+    const expensiveResearchFavorite = option({
+      contract_symbol: "XYZ260904C00100000",
+      bid: 2.90,
+      ask: 3.00,
+      mark: 2.95,
+      open_interest: 9000,
+      volume: 1500,
+      delta: 0.35,
+    });
+    const affordableExecutable = option({
+      contract_symbol: "XYZ260904C00110000",
+      strike: 110,
+      bid: 0.78,
+      ask: 0.82,
+      mark: 0.80,
+      open_interest: 3500,
+      volume: 900,
+      delta: 0.31,
+    });
+
+    const research = decideOpportunity(strongBullish, [expensiveResearchFavorite, affordableExecutable], now);
+    const executable = decideOpportunity(strongBullish, [expensiveResearchFavorite, affordableExecutable], now, {
+      opportunityThreshold: 0.60,
+      directionalThreshold: 0.20,
+      maxOptionDebitUsd: 100,
+      lane: "strategy",
+    });
+
+    expect(research.recommendation).toBe("CALL");
+    expect(research.selectedOption?.option.contract_symbol).toBe("XYZ260904C00100000");
+    expect(executable.recommendation).toBe("CALL");
+    expect(executable.selectedOption?.option.contract_symbol).toBe("XYZ260904C00110000");
+    expect((executable.selectedOption?.option.ask ?? 99) * 100).toBeLessThanOrEqual(100);
   });
 });
