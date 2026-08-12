@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "project": "Radar",
+  "canonical_branch": "agent/v01-options-intelligence-foundation",
+  "current_phase": "autonomous_paper_evidence",
+  "system_version": "0.3.0",
+  "execution_mode": "paper",
+  "broker_mode": "alpaca_paper",
+  "north_star": "realized expected value per recommendation after realistic friction",
+  "next_build": "execution_market_state_observability",
+  "active_tracks": {
+    "track_a": "forward Alpaca PAPER predictions, execution, outcomes and operational reliability",
+    "track_b": "historical warehouse, leakage-safe backfills, walk-forward testing and calibration"
+  },
+  "completed_milestones": [
+    "immutable raw evidence and normalized signal pipeline",
+    "Pulse read-only signal bridge",
+    "SEC EDGAR adapter",
+    "provider-neutral stock and options evidence",
+    "CALL PUT PASS opportunity engine",
+    "economic relationship graph",
+    "adversarial thesis records",
+    "immutable hash-linked prediction ledger",
+    "tiered paper risk policy",
+    "autonomous outcome collection",
+    "distinct-signal scoring",
+    "budget-aware executable contract selection",
+    "trade lifecycle cockpit",
+    "Alpaca PAPER broker execution and reconciliation",
+    "Alpaca PAPER account preflight on deployment"
+  ],
+  "protected_boundaries": [
+    "Radar reads Pulse; Radar does not write to or control Pulse",
+    "published predictions are immutable",
+    "research ranking is budget-independent",
+    "do not loosen thresholds merely to manufacture trades",
+    "historical reference outcomes stay separate from broker execution outcomes",
+    "system tests are excluded from strategy proof",
+    "current phase is paper only and has no live-money broker endpoint",
+    "current policy disables 0DTE"
+  ],
+  "current_policy": {
+    "daily_target_usd": 50,
+    "daily_hard_cap_usd": 100,
+    "max_single_trade_usd": 100,
+    "max_open_strategy_risk_usd": 200,
+    "daily_realized_loss_stop_usd": 40,
+    "min_opportunity_score": 0.6,
+    "exceptional_opportunity_score": 0.75,
+    "absolute_direction_gate": 0.2,
+    "max_bid_ask_spread_pct": 0.25,
+    "min_open_interest": 25,
+    "min_volume": 5,
+    "min_days_to_expiration": 7,
+    "allow_0dte": false,
+    "live_enabled": false
+  },
+  "last_checkpoint_date": "2026-08-12"
+}
