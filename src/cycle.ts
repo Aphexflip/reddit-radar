@@ -1,5 +1,5 @@
 import { alpacaPredict, type AlpacaEnv } from "./alpaca";
-import { executeTieredPaperPrediction } from "./paper";
+import { executeTieredPaperPredictionV02 } from "./paper-v02";
 import { syncPulseTrends, type PulseEnv } from "./pulse";
 
 export type AutonomousPaperEnv = AlpacaEnv & PulseEnv;
@@ -21,6 +21,9 @@ interface CycleItemSummary {
   estimated_ev_score: number | null;
   execution_status: string | null;
   execution_tier: string | null;
+  execution_contract_symbol: string | null;
+  execution_debit_usd: number | null;
+  execution_reason: string | null;
   paper_order_id: string | null;
   error: string | null;
 }
@@ -82,11 +85,14 @@ export async function runAutonomousPaperCycle(
       let estimatedEvScore: number | null = null;
       let executionStatus: string | null = null;
       let executionTier: string | null = null;
+      let executionContractSymbol: string | null = null;
+      let executionDebitUsd: number | null = null;
+      let executionReason: string | null = null;
       let paperOrderId: string | null = null;
       let errorMessage: string | null = null;
 
       try {
-        // Sequential provider calls are intentional in v0.1. We favor deterministic,
+        // Sequential provider calls are intentional. We favor deterministic,
         // rate-limit-friendly collection over maximizing throughput before the system
         // has proved any trading edge.
         const prediction = await alpacaPredict(env, {
@@ -107,10 +113,19 @@ export async function runAutonomousPaperCycle(
         else passes += 1;
 
         if ((recommendation === "CALL" || recommendation === "PUT") && predictionId) {
-          const execution = await executeTieredPaperPrediction(env, predictionId);
+          const execution = await executeTieredPaperPredictionV02(env, predictionId);
           executionStatus = "status" in execution ? String(execution.status) : null;
           executionTier = "tier" in execution && execution.tier !== undefined
             ? String(execution.tier)
+            : null;
+          executionContractSymbol = "contract_symbol" in execution && execution.contract_symbol
+            ? String(execution.contract_symbol)
+            : null;
+          executionDebitUsd = "debit_usd" in execution && typeof execution.debit_usd === "number"
+            ? execution.debit_usd
+            : null;
+          executionReason = "reason" in execution && execution.reason !== undefined && execution.reason !== null
+            ? String(execution.reason)
             : null;
           paperOrderId = "order_id" in execution && execution.order_id
             ? String(execution.order_id)
@@ -128,8 +143,9 @@ export async function runAutonomousPaperCycle(
         INSERT INTO paper_cycle_items(
           id, cycle_run_id, rank, ticker, smart_score, prediction_id,
           recommendation_type, estimated_ev_score, paper_order_id,
-          execution_status, execution_tier, error_message
-        ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+          execution_status, execution_tier, execution_contract_symbol,
+          execution_debit_usd, execution_reason, error_message
+        ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
       `).bind(
         itemId,
         cycleId,
@@ -142,6 +158,9 @@ export async function runAutonomousPaperCycle(
         paperOrderId,
         executionStatus,
         executionTier,
+        executionContractSymbol,
+        executionDebitUsd,
+        executionReason,
         errorMessage,
       ).run();
 
@@ -154,6 +173,9 @@ export async function runAutonomousPaperCycle(
         estimated_ev_score: estimatedEvScore,
         execution_status: executionStatus,
         execution_tier: executionTier,
+        execution_contract_symbol: executionContractSymbol,
+        execution_debit_usd: executionDebitUsd,
+        execution_reason: executionReason,
         paper_order_id: paperOrderId,
         error: errorMessage,
       });
@@ -175,8 +197,9 @@ export async function runAutonomousPaperCycle(
       errors,
       items,
       execution_mode: "paper",
+      execution_selector: "budget_aware_v0.2",
       live_trading_enabled: false,
-      note: "The cycle can autonomously generate and simulate trades, but all current fills are paper records. Capital escalation states are informational until a live broker adapter is explicitly enabled later.",
+      note: "Research contract ranking remains budget-independent. Paper execution separately chooses the highest-quality qualifying contract inside the active single-trade cap, then applies the unchanged risk policy. All fills remain paper records.",
     };
 
     await env.DB.prepare(`

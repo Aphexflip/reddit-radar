@@ -37,6 +37,9 @@ type CycleItemRow = {
   paper_order_id: string | null;
   execution_status: string | null;
   execution_tier: string | null;
+  execution_contract_symbol: string | null;
+  execution_debit_usd: number | null;
+  execution_reason: string | null;
   error_message: string | null;
   created_at: string;
   prediction_direction: string | null;
@@ -134,7 +137,8 @@ export async function paperSessionStatus(env: Env): Promise<Record<string, unkno
     env.DB.prepare(`
       SELECT pci.cycle_run_id, pci.rank, pci.ticker, pci.smart_score, pci.prediction_id,
              pci.recommendation_type, pci.estimated_ev_score, pci.paper_order_id,
-             pci.execution_status, pci.execution_tier, pci.error_message, pci.created_at,
+             pci.execution_status, pci.execution_tier, pci.execution_contract_symbol,
+             pci.execution_debit_usd, pci.execution_reason, pci.error_message, pci.created_at,
              p.direction AS prediction_direction,
              p.confidence AS prediction_confidence,
              r.underlying_opportunity_score,
@@ -198,6 +202,9 @@ export async function paperSessionStatus(env: Env): Promise<Record<string, unkno
       paper_order_id: item.paper_order_id,
       execution_status: item.execution_status,
       execution_tier: item.execution_tier,
+      execution_contract_symbol: item.execution_contract_symbol,
+      execution_debit_usd: item.execution_debit_usd,
+      execution_reason: item.execution_reason,
       error_message: item.error_message,
       created_at: item.created_at,
     };
@@ -217,6 +224,11 @@ export async function paperSessionStatus(env: Env): Promise<Record<string, unkno
       data_quality: finiteOrNull(item.data_quality),
       recommendation: item.recommendation_type,
       reasons: item.reasons,
+      execution_status: item.execution_status,
+      execution_tier: item.execution_tier,
+      execution_contract_symbol: item.execution_contract_symbol,
+      execution_debit_usd: finiteOrNull(item.execution_debit_usd),
+      execution_reason: item.execution_reason,
     }))
     .sort((a, b) => (b.opportunity_score ?? -1) - (a.opportunity_score ?? -1))
     .slice(0, 10);
@@ -238,7 +250,11 @@ export async function paperSessionStatus(env: Env): Promise<Record<string, unkno
     decision_gate: {
       minimum_underlying_opportunity_score: 0.60,
       minimum_absolute_directional_score: 0.20,
-      note: "These are v0.1 research gates. They are not profitability-calibrated thresholds yet.",
+      note: "These are v0.2 research gates. They are not profitability-calibrated thresholds yet.",
+    },
+    execution_selector: {
+      mode: "budget_aware_v0.2",
+      note: "Research option ranking stays budget-independent. Paper execution separately searches same-cycle option snapshots for the highest-quality contract inside the active single-trade cap before applying the unchanged risk policy.",
     },
     latest_cycle: latestCycle,
     latest_cycle_diagnostics: {
