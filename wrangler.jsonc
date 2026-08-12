@@ -18,8 +18,9 @@
     }
   ],
   "vars": {
-    "SYSTEM_VERSION": "0.2.0",
+    "SYSTEM_VERSION": "0.3.0",
     "EXECUTION_MODE": "paper",
+    "BROKER_MODE": "alpaca_paper",
     "DAILY_TARGET_USD": "50",
     "DAILY_HARD_CAP_USD": "100",
     "MAX_SINGLE_TRADE_USD": "100",
