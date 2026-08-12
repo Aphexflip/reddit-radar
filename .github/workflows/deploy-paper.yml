@@ -54,6 +54,42 @@ jobs:
             exit 1
           fi
 
+      - name: Verify Alpaca PAPER trading account access
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACCOUNT_JSON="$(curl --fail-with-body --silent --show-error \
+            https://paper-api.alpaca.markets/v2/account \
+            -H "APCA-API-KEY-ID: ${ALPACA_API_KEY_ID}" \
+            -H "APCA-API-SECRET-KEY: ${ALPACA_API_SECRET_KEY}" \
+            -H "Accept: application/json")"
+          ACCOUNT_JSON="$ACCOUNT_JSON" node - <<'NODE'
+          const account = JSON.parse(process.env.ACCOUNT_JSON || '{}');
+          const status = String(account.status || 'unknown');
+          const blocked = Boolean(account.trading_blocked || account.trade_suspended_by_user);
+          const level = Number(account.options_trading_level ?? 0);
+          const optionsBuyingPower = Number(account.options_buying_power ?? 0);
+          if (status !== 'ACTIVE') {
+            console.error(`::error::Alpaca PAPER account is not ACTIVE (status=${status})`);
+            process.exit(1);
+          }
+          if (blocked) {
+            console.error('::error::Alpaca PAPER account reports trading blocked/suspended');
+            process.exit(1);
+          }
+          if (!Number.isFinite(level) || level < 2) {
+            console.error(`::error::Alpaca PAPER options trading level ${level} cannot buy long options`);
+            process.exit(1);
+          }
+          console.log(JSON.stringify({
+            alpaca_paper_account: 'authenticated',
+            status,
+            options_trading_level: level,
+            options_buying_power_available: Number.isFinite(optionsBuyingPower) && optionsBuyingPower > 0,
+            live_money_endpoint_used: false
+          }));
+          NODE
+
       - name: Validate build before touching Cloudflare
         run: |
           npm run db:local
@@ -159,7 +195,7 @@ jobs:
           NODE
           )"
           RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          gh issue comment 1 --body "## Immediate paper validation cycle\n\n\`\`\`json\n${SUMMARY}\n\`\`\`\n\nRun: ${RUN_URL}\n\nPaper simulation only; live broker execution remains disabled."
+          gh issue comment 1 --body "## Immediate paper validation cycle\n\n\`\`\`json\n${SUMMARY}\n\`\`\`\n\nRun: ${RUN_URL}\n\nAlpaca paper-broker execution only; live-money execution remains disabled."
 
       - name: Deploy paper Worker
         run: npx wrangler deploy --config .wrangler.deploy.jsonc
@@ -200,7 +236,7 @@ jobs:
       - name: Deployment boundary summary
         run: |
           echo "Paper Worker deployed with Radar D1, read-only Pulse D1 binding, R2, and runtime secrets."
-          echo "EXECUTION_MODE remains paper and no live broker adapter exists in this build."
+          echo "BROKER_MODE=alpaca_paper and EXECUTION_MODE=paper; no live-money broker adapter exists in this build."
 
       - name: Report deployment success
         if: success()
@@ -208,7 +244,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          gh issue comment 1 --body "✅ PAPER DEPLOY SUCCESS — commit ${GITHUB_SHA}. Radar D1/R2, read-only Pulse D1 binding, migrations, Worker, cron, and runtime secrets completed. EXECUTION_MODE remains paper; live broker execution is disabled. Run: ${RUN_URL}"
+          gh issue comment 1 --body "✅ PAPER DEPLOY SUCCESS — commit ${GITHUB_SHA}. Radar D1/R2, read-only Pulse D1 binding, migrations, Worker, cron, runtime secrets, and Alpaca PAPER account authentication completed. BROKER_MODE=alpaca_paper; live-money execution is disabled. Run: ${RUN_URL}"
 
       - name: Report deployment failure
         if: failure()
@@ -216,4 +252,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          gh issue comment 1 --body "❌ PAPER DEPLOY FAILED — commit ${GITHUB_SHA}. Check the first failed step. No live broker execution exists in this build. Run: ${RUN_URL}"
+          gh issue comment 1 --body "❌ PAPER DEPLOY FAILED — commit ${GITHUB_SHA}. Check the first failed step. No live-money broker execution exists in this build. Run: ${RUN_URL}"
