@@ -97,7 +97,7 @@ export function dashboardHtml(): string {
       <div>
         <div class="label">Live decision engine</div>
         <h2>Trade Queue</h2>
-        <div class="sub">This visualizes Radar's stored evidence and decision state — not hidden chain-of-thought. Watch candidates move from Reddit/market evidence toward CALL, PUT, PASS, option selection, and simulated paper execution.</div>
+        <div class="sub">Research contract ranking stays budget-independent. Execution v0.2 separately searches for the best quality contract inside the active paper budget, then applies the unchanged risk policy.</div>
       </div>
       <div class="engineMeta">
         <span id="engineState" class="pill livepill"><span class="dot"></span> Loading</span>
@@ -110,8 +110,8 @@ export function dashboardHtml(): string {
       <div class="stage"><strong>1 · DISCOVER</strong><span>Pulse mentions, acceleration and candidate ranking.</span></div>
       <div class="stage"><strong>2 · MARKET CHECK</strong><span>Intraday move, previous close, range position and volume context.</span></div>
       <div class="stage"><strong>3 · EVIDENCE GATE</strong><span>Opportunity ≥ 60 and absolute direction ≥ 20.</span></div>
-      <div class="stage"><strong>4 · OPTION CHECK</strong><span>Correct call/put side, liquidity, spread, DTE and contract quality.</span></div>
-      <div class="stage"><strong>5 · PAPER EXECUTE</strong><span>Risk policy decides simulated fill, block or escalation.</span></div>
+      <div class="stage"><strong>4 · OPTION CHECK</strong><span>Best research contract + best qualifying contract inside the active single-trade budget.</span></div>
+      <div class="stage"><strong>5 · PAPER EXECUTE</strong><span>Daily target, open risk, hard cap and loss-stop policy decide simulated fill or block.</span></div>
     </div>
 
     <div class="queueHead">
@@ -142,13 +142,13 @@ export function dashboardHtml(): string {
       <div>
         <div class="label">Paper portfolio</div>
         <h2>Open Positions</h2>
-        <div class="portfolioNote">Strategy fills and isolated mechanical tests live here. <b>SYSTEM TEST</b> rows prove the plumbing only; they are not recommendations and are excluded from strategy performance/proof. Strategy marks use the configured Alpaca option quote feed and show their quote age.</div>
+        <div class="portfolioNote">Midpoint marks are reference values, not assumed exits. For strategy positions Radar now shows both midpoint reference P&amp;L and a more conservative bid-side exit P&amp;L. <b>SYSTEM TEST</b> rows remain excluded from strategy proof.</div>
       </div>
       <span id="portfolioSummary" class="pill">Loading</span>
     </div>
     <div class="tablewrap">
       <table>
-        <thead><tr><th>Lane</th><th>Ticker</th><th>Side</th><th>Contract</th><th>Entry</th><th>Debit</th><th>Mark / P&amp;L</th><th>Opened</th></tr></thead>
+        <thead><tr><th>Lane</th><th>Ticker</th><th>Side</th><th>Contract</th><th>Entry</th><th>Debit</th><th>Mark / Exit P&amp;L</th><th>Opened</th></tr></thead>
         <tbody id="openPositionRows"><tr><td colspan="8">Loading…</td></tr></tbody>
       </table>
     </div>
@@ -169,13 +169,13 @@ export function dashboardHtml(): string {
     <div class="label">Latest immutable opportunities</div>
     <div class="tablewrap">
       <table>
-        <thead><tr><th>Ticker</th><th>Verdict</th><th>Confidence</th><th>EV rank</th><th>Contract</th><th>Ask</th><th>Paper</th><th>Published</th></tr></thead>
+        <thead><tr><th>Ticker</th><th>Verdict</th><th>Confidence</th><th>EV rank</th><th>Research contract</th><th>Ask</th><th>Paper</th><th>Published</th></tr></thead>
         <tbody id="rows"><tr><td colspan="8">Loading…</td></tr></tbody>
       </table>
     </div>
   </section>
 
-  <p class="sub">Core loop: <code>Pulse sync → Alpaca market evidence → evidence gate → option chain → immutable prediction → tiered paper execution → scheduled outcome collection → proof ledger</code>.</p>
+  <p class="sub">Core loop: <code>Pulse sync → Alpaca market evidence → evidence gate → research option rank → budget-aware execution contract → paper risk policy → scheduled outcome collection → proof ledger</code>.</p>
 </main>
 <script>
 const pctRatio = n => n == null ? '—' : (n * 100).toFixed(1) + '%';
@@ -205,9 +205,19 @@ function stageFor(x){
   const opp = Number(x.opportunity_score || 0);
   const dir = Math.abs(Number(x.directional_score || 0));
   const rec = x.recommendation;
+  const status = String(x.execution_status || '');
+  const execReason = String(x.execution_reason || '').toLowerCase();
   const reason = Array.isArray(x.reasons) ? x.reasons.join(' ').toLowerCase() : '';
-  if (rec === 'CALL') return {label:'CALL READY', cls:'trade'};
-  if (rec === 'PUT') return {label:'PUT READY', cls:'put'};
+  if (status === 'filled') return {label:'PAPER FILLED', cls:'trade'};
+  if (status === 'budget_blocked') return {label:'BUDGET BLOCKED', cls:'blocked'};
+  if (status === 'requires_escalation' && execReason.includes('open option debit risk')) return {label:'RISK BLOCKED', cls:'blocked'};
+  if (status === 'requires_escalation') return {label:'EXECUTION BLOCKED', cls:'blocked'};
+  if (status === 'blocked') return {label:'POLICY BLOCKED', cls:'blocked'};
+  if (status === 'market_closed') return {label:'MARKET CLOSED', cls:'blocked'};
+  if (rec === 'CALL' && x.execution_contract_symbol) return {label:'CALL QUALIFIED', cls:'trade'};
+  if (rec === 'PUT' && x.execution_contract_symbol) return {label:'PUT QUALIFIED', cls:'put'};
+  if (rec === 'CALL') return {label:'CALL THESIS', cls:'trade'};
+  if (rec === 'PUT') return {label:'PUT THESIS', cls:'put'};
   if (opp >= .60 && dir >= .20 && reason.includes('no ') && reason.includes('option')) return {label:'OPTION FILTERED', cls:'blocked'};
   if (opp >= .60 && dir >= .20) return {label:'CHAIN CHECK', cls:'near'};
   if (opp >= .48 || dir >= .16) return {label:'NEAR GATE', cls:'near'};
@@ -225,6 +235,10 @@ function renderCandidate(x){
   const dirText = dir > .03 ? 'Bullish +' + (dir * 100).toFixed(0) : dir < -.03 ? 'Bearish ' + (dir * 100).toFixed(0) : 'Neutral ' + (dir * 100).toFixed(0);
   const gap = Math.max(0, .60 - opp);
   const reasons = Array.isArray(x.reasons) && x.reasons.length ? x.reasons.join(' · ') : 'Waiting for more evidence.';
+  const exec = x.execution_contract_symbol
+    ? ' Execution contract ' + esc(x.execution_contract_symbol) + (x.execution_debit_usd == null ? '' : ' · ' + usd(x.execution_debit_usd)) + '.'
+    : '';
+  const execReason = x.execution_reason ? ' ' + esc(x.execution_reason) : '';
   return '<div class="candidate">' +
     '<div class="candidateTop"><div><div class="ticker">' + esc(x.ticker) + '</div><div class="detail">Pulse score ' + (x.smart_score == null ? '—' : Number(x.smart_score).toFixed(1)) + '</div></div><span class="badge ' + st.cls + '">' + st.label + '</span></div>' +
     '<div class="scoreline"><span>Underlying opportunity</span><b>' + (opp * 100).toFixed(1) + ' / 60</b></div>' +
@@ -235,7 +249,7 @@ function renderCandidate(x){
       '<div class="micro"><b>' + (conf * 100).toFixed(0) + '%</b><span>Confidence</span></div>' +
       '<div class="micro"><b>' + (dq * 100).toFixed(0) + '%</b><span>Data quality</span></div>' +
     '</div>' +
-    '<div class="reason">' + (gap > 0 ? 'Needs +' + (gap * 100).toFixed(1) + ' opportunity points. ' : 'Underlying gate cleared. ') + esc(reasons) + '</div>' +
+    '<div class="reason">' + (gap > 0 ? 'Needs +' + (gap * 100).toFixed(1) + ' opportunity points. ' : 'Underlying gate cleared. ') + esc(reasons) + exec + execReason + '</div>' +
   '</div>';
 }
 
@@ -252,13 +266,18 @@ function sideText(row){
 
 function quoteCell(row){
   if (row.last_mark != null) {
-    const pnl = Number(row.unrealized_pnl_usd || 0);
-    const cls = pnl > 0 ? 'pnlpos' : pnl < 0 ? 'pnlneg' : '';
-    const bid = row.last_bid == null ? '—' : '$' + Number(row.last_bid).toFixed(2);
-    const ask = row.last_ask == null ? '—' : '$' + Number(row.last_ask).toFixed(2);
+    const refPnl = Number(row.unrealized_pnl_usd || 0);
+    const refCls = refPnl > 0 ? 'pnlpos' : refPnl < 0 ? 'pnlneg' : '';
+    const bid = row.last_bid == null ? null : Number(row.last_bid);
+    const ask = row.last_ask == null ? null : Number(row.last_ask);
+    const conservative = row.conservative_exit_pnl_usd == null ? null : Number(row.conservative_exit_pnl_usd);
+    const conservativeCls = conservative == null ? '' : conservative > 0 ? 'pnlpos' : conservative < 0 ? 'pnlneg' : '';
     const feed = row.quote_feed ? String(row.quote_feed).toUpperCase() : row.lane === 'system_test' ? 'TEST QUOTE' : 'QUOTE';
-    return '$' + Number(row.last_mark).toFixed(2) + ' · <span class="' + cls + '">' + usd(pnl) + '</span>' +
-      '<div class="detail">bid ' + bid + ' · ask ' + ask + ' · ' + esc(feed) + ' · ' + ageText(row.last_marked_at) + '</div>';
+    const ref = 'MID $' + Number(row.last_mark).toFixed(2) + ' · <span class="' + refCls + '">' + usd(refPnl) + ' ref</span>';
+    const exit = row.lane === 'strategy' && bid != null && conservative != null
+      ? '<div class="detail">BID EXIT $' + bid.toFixed(2) + ' · <span class="' + conservativeCls + '">' + usd(conservative) + ' conservative</span></div>'
+      : '';
+    return ref + exit + '<div class="detail">bid ' + (bid == null ? '—' : '$' + bid.toFixed(2)) + ' · ask ' + (ask == null ? '—' : '$' + ask.toFixed(2)) + ' · ' + esc(feed) + ' · ' + ageText(row.last_marked_at) + '</div>';
   }
   if (row.mark_error) return '<span class="pnlneg">Mark unavailable</span><div class="detail">' + esc(row.mark_error) + '</div>';
   return 'Waiting for quote';
@@ -348,7 +367,7 @@ async function loadSession(){
     const state = document.querySelector('#engineState');
     state.innerHTML = '<span class="dot"></span>' + (latest && latest.status === 'completed' ? 'Radar Live' : latest ? esc(latest.status) : 'Waiting');
     document.querySelector('#lastCycle').textContent = latest ? 'Last cycle ' + ageText(latest.completed_at || latest.started_at) + ' · ' + (latest.candidates_seen || 0) + ' candidates' : 'No cycle yet today';
-    document.querySelector('#nextWake').textContent = 'Next scheduled wake ~' + nextQuarterHour().toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});
+    document.querySelector('#nextWake').textContent = 'Next decision wake ~' + nextQuarterHour().toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}) + ' · maintenance every ~5m';
     document.querySelector('#queueSummary').textContent = (today.calls || 0) + ' CALL · ' + (today.puts || 0) + ' PUT · ' + (today.passes || 0) + ' PASS · ' + (today.paper_fills || 0) + ' fills today';
     const queue = document.querySelector('#tradeQueue');
     const candidates = session.latest_cycle_diagnostics && Array.isArray(session.latest_cycle_diagnostics.closest_to_underlying_gate) ? session.latest_cycle_diagnostics.closest_to_underlying_gate : [];
