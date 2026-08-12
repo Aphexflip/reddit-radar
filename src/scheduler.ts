@@ -1,3 +1,4 @@
+import { maintainAlpacaPaperBroker } from "./broker-maintenance";
 import { runAutonomousPaperCycle, type AutonomousPaperEnv } from "./cycle";
 import { getUsMarketClock, paperEntryGate, type AlpacaClock } from "./market";
 import { collectDueOutcomes } from "./outcomes";
@@ -13,6 +14,7 @@ type LatestCycleRow = {
 
 export interface ScheduledTickSummary {
   timestamp: string;
+  broker_maintenance: Awaited<ReturnType<typeof maintainAlpacaPaperBroker>> | null;
   outcome_collection: Awaited<ReturnType<typeof collectDueOutcomes>> | null;
   system_test_positions: Awaited<ReturnType<typeof maintainSystemTestPositions>> | null;
   market_clock: AlpacaClock | null;
@@ -48,6 +50,7 @@ export async function runScheduledPaperTick(
   env: AutonomousPaperEnv,
 ): Promise<ScheduledTickSummary> {
   const errors: string[] = [];
+  let brokerMaintenance: Awaited<ReturnType<typeof maintainAlpacaPaperBroker>> | null = null;
   let outcomeCollection: Awaited<ReturnType<typeof collectDueOutcomes>> | null = null;
   let systemTestPositions: Awaited<ReturnType<typeof maintainSystemTestPositions>> | null = null;
   let marketClock: AlpacaClock | null = null;
@@ -56,9 +59,16 @@ export async function runScheduledPaperTick(
   let decisionCycleSkippedReason: string | null = null;
   let newEntriesSkippedReason: string | null = null;
 
-  // Monitoring/maintenance intentionally runs on every scheduler heartbeat. The
-  // cron can therefore be more frequent than the full decision engine without
-  // multiplying near-duplicate predictions.
+  // Broker reconciliation runs first. In alpaca_paper mode a horizon-due position
+  // is moved out of local "filled" state before any historical outcome reference
+  // can run, so the old simulator can never masquerade as the broker exit.
+  try {
+    brokerMaintenance = await maintainAlpacaPaperBroker(env);
+  } catch (error) {
+    errors.push(`broker maintenance: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  // Research/reference outcomes remain independent from broker execution proof.
   try {
     outcomeCollection = await collectDueOutcomes(env, 50);
   } catch (error) {
@@ -101,6 +111,7 @@ export async function runScheduledPaperTick(
 
   return {
     timestamp: new Date().toISOString(),
+    broker_maintenance: brokerMaintenance,
     outcome_collection: outcomeCollection,
     system_test_positions: systemTestPositions,
     market_clock: marketClock,

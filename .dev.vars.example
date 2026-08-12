@@ -9,9 +9,12 @@ PULSE_API_ORIGIN=https://redditpulse-v0.aphexflip.workers.dev
 # SEC asks automated clients to identify themselves with organization/app + monitored contact.
 SEC_USER_AGENT=RSYMO Reddit Radar your-monitored-contact@example.com
 
-# Optional development market/options adapter.
+# Alpaca credentials. Radar's broker adapter is hard-coded to Alpaca PAPER only.
 ALPACA_API_KEY_ID=replace-with-paper-key-id
 ALPACA_API_SECRET_KEY=replace-with-paper-secret
+
+# local_sim keeps deterministic D1 fills; alpaca_paper submits actual paper orders.
+BROKER_MODE=local_sim
 
 # Free defaults are IEX equities + indicative options. Indicative options are paper-only.
 ALPACA_STOCK_FEED=iex

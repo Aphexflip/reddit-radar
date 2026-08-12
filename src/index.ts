@@ -17,7 +17,7 @@ import {
   type UpsertRelationshipInput,
 } from "./graph";
 import { collectDueOutcomes } from "./outcomes";
-import { executeTieredPaperPrediction } from "./paper";
+import { executeTieredPaperPredictionV03 } from "./paper-v03";
 import { paperPortfolio } from "./portfolio";
 import { proofSummary } from "./proof";
 import { syncPulseTrends, type PulseSyncInput } from "./pulse";
@@ -33,6 +33,7 @@ type RuntimeEnv = Env & {
   ALPACA_API_SECRET_KEY?: string;
   ALPACA_STOCK_FEED?: string;
   ALPACA_OPTION_FEED?: string;
+  BROKER_MODE?: string;
   PULSE_API_ORIGIN?: string;
   PULSE_API_TOKEN?: string;
 };
@@ -105,6 +106,7 @@ export default {
           ok: dbCheck?.ok === 1,
           system_version: env.SYSTEM_VERSION,
           execution_mode: env.EXECUTION_MODE,
+          broker_mode: env.BROKER_MODE?.trim() || "local_sim",
           live_trading_enabled: false,
           sec_configured: Boolean(env.SEC_USER_AGENT?.trim()),
           pulse_origin: env.PULSE_API_ORIGIN?.trim() || "https://redditpulse-v0.aphexflip.workers.dev",
@@ -191,7 +193,7 @@ export default {
       if (paperMatch && request.method === "POST") {
         const predictionId = decodeURIComponent(paperMatch[1] ?? "");
         if (!predictionId) return json({ error: "prediction id is required" }, 400);
-        return json(await executeTieredPaperPrediction(env, predictionId));
+        return json(await executeTieredPaperPredictionV03(env, predictionId));
       }
 
       if (url.pathname === "/api/outcomes/collect" && request.method === "POST") {
