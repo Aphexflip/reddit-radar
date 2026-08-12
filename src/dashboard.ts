@@ -11,10 +11,13 @@ export function dashboardHtml(): string {
     body { margin: 0; background: #090b10; color: #f4f6fb; }
     main { width: min(1220px, calc(100% - 28px)); margin: 0 auto; padding: 28px 0 60px; }
     .top { display:flex; gap:18px; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; }
+    .topPills { display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
     h1 { font-size: clamp(28px, 4vw, 52px); margin: 0; letter-spacing:-.04em; }
     h2 { font-size:24px; margin:4px 0 6px; letter-spacing:-.025em; }
     .sub { color:#9ca5b8; max-width:850px; line-height:1.5; }
     .pill { border:1px solid #30394b; border-radius:999px; padding:8px 12px; color:#dbe6ff; background:#141925; font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
+    .policyok { color:#7ff5ac; border-color:#28563a; background:#0e2016; }
+    .policywarn { color:#f4d477; border-color:#665829; background:#201b0d; }
     .livepill { display:inline-flex; align-items:center; gap:7px; }
     .dot { width:8px; height:8px; border-radius:999px; background:#7ff5ac; box-shadow:0 0 14px #7ff5ac; animation:pulse 1.6s infinite; }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
@@ -73,7 +76,7 @@ export function dashboardHtml(): string {
     .sectionGap { margin-top:24px; }
     code { color:#b9ccff; }
     @media (max-width: 900px) { .grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .funnel{grid-template-columns:repeat(2,minmax(0,1fr));} .candidateGrid{grid-template-columns:1fr;} .tablewrap{overflow:auto;} .engineMeta{text-align:left;} }
-    @media (max-width: 520px) { .grid { grid-template-columns:1fr; } .funnel{grid-template-columns:1fr;} }
+    @media (max-width: 520px) { .grid { grid-template-columns:1fr; } .funnel{grid-template-columns:1fr;} .topPills{justify-content:flex-start;} }
   </style>
 </head>
 <body>
@@ -83,7 +86,10 @@ export function dashboardHtml(): string {
       <h1>Options Intelligence</h1>
       <p class="sub">Internal proof dashboard. Recommendations are immutable. Paper P&amp;L, historical option-reference returns, and execution-grade returns are deliberately separated so a favorable mark cannot masquerade as a tradable edge.</p>
     </div>
-    <span class="pill">Paper Mode</span>
+    <div class="topPills">
+      <span class="pill">Paper Mode</span>
+      <span id="policyState" class="pill">Policy loading</span>
+    </div>
   </div>
 
   <section class="card brain">
@@ -113,7 +119,7 @@ export function dashboardHtml(): string {
         <div class="label">Closest to a trade right now</div>
         <div id="queueSummary" class="queueSummary">Loading candidates…</div>
       </div>
-      <div id="riskSummary" class="queueSummary">—</div>
+      <div id="riskSummary" class="queueSummary">Loading current paper risk…</div>
     </div>
     <div id="tradeQueue" class="candidateGrid"><div class="empty">Loading live decision state…</div></div>
   </section>
@@ -136,7 +142,7 @@ export function dashboardHtml(): string {
       <div>
         <div class="label">Paper portfolio</div>
         <h2>Open Positions</h2>
-        <div class="portfolioNote">Strategy fills and isolated mechanical tests live here. <b>SYSTEM TEST</b> rows prove the plumbing only; they are not recommendations and are excluded from strategy performance/proof.</div>
+        <div class="portfolioNote">Strategy fills and isolated mechanical tests live here. <b>SYSTEM TEST</b> rows prove the plumbing only; they are not recommendations and are excluded from strategy performance/proof. Strategy marks use the configured Alpaca option quote feed and show their quote age.</div>
       </div>
       <span id="portfolioSummary" class="pill">Loading</span>
     </div>
@@ -244,6 +250,20 @@ function sideText(row){
   return row.recommendation_type || row.option_type || '—';
 }
 
+function quoteCell(row){
+  if (row.last_mark != null) {
+    const pnl = Number(row.unrealized_pnl_usd || 0);
+    const cls = pnl > 0 ? 'pnlpos' : pnl < 0 ? 'pnlneg' : '';
+    const bid = row.last_bid == null ? '—' : '$' + Number(row.last_bid).toFixed(2);
+    const ask = row.last_ask == null ? '—' : '$' + Number(row.last_ask).toFixed(2);
+    const feed = row.quote_feed ? String(row.quote_feed).toUpperCase() : row.lane === 'system_test' ? 'TEST QUOTE' : 'QUOTE';
+    return '$' + Number(row.last_mark).toFixed(2) + ' · <span class="' + cls + '">' + usd(pnl) + '</span>' +
+      '<div class="detail">bid ' + bid + ' · ask ' + ask + ' · ' + esc(feed) + ' · ' + ageText(row.last_marked_at) + '</div>';
+  }
+  if (row.mark_error) return '<span class="pnlneg">Mark unavailable</span><div class="detail">' + esc(row.mark_error) + '</div>';
+  return 'Waiting for quote';
+}
+
 function renderPortfolio(portfolio){
   const strategyOpen = portfolio.strategy?.open || [];
   const systemOpen = portfolio.system_test?.open || [];
@@ -260,14 +280,6 @@ function renderPortfolio(portfolio){
     openRows.innerHTML = opens.map(row => {
       const entry = row.lane === 'system_test' ? row.entry_fill_price : row.fill_price;
       const opened = row.lane === 'system_test' ? row.opened_at : row.filled_at;
-      let mark = 'Waiting for mark';
-      if (row.lane === 'system_test' && row.last_mark != null) {
-        const pnl = Number(row.unrealized_pnl_usd || 0);
-        const cls = pnl > 0 ? 'pnlpos' : pnl < 0 ? 'pnlneg' : '';
-        mark = '$' + Number(row.last_mark).toFixed(2) + ' · <span class="' + cls + '">' + usd(pnl) + '</span>';
-      } else if (row.lane === 'strategy') {
-        mark = 'Strategy horizon tracking';
-      }
       return '<tr>' +
         '<td>' + laneBadge(row) + '</td>' +
         '<td><b>' + esc(row.ticker) + '</b></td>' +
@@ -275,7 +287,7 @@ function renderPortfolio(portfolio){
         '<td>' + esc(row.contract_symbol) + '</td>' +
         '<td>' + (entry == null ? '—' : '$' + Number(entry).toFixed(2)) + '</td>' +
         '<td>' + usd(row.notional_usd) + '</td>' +
-        '<td>' + mark + '</td>' +
+        '<td>' + quoteCell(row) + '</td>' +
         '<td>' + (opened ? new Date(opened).toLocaleString() : '—') + '</td>' +
       '</tr>';
     }).join('');
@@ -303,6 +315,29 @@ function renderPortfolio(portfolio){
   }
 }
 
+function renderPolicyAndRisk(portfolio){
+  const risk = portfolio.risk || {};
+  const policy = portfolio.active_policy || null;
+  const riskSummary = document.querySelector('#riskSummary');
+  const over = Boolean(risk.open_risk_over_cap);
+  riskSummary.textContent = 'Today deployed ' + usd(risk.today_deployed_usd || 0) + ' · current open risk ' + usd(risk.current_open_strategy_risk_usd || 0) +
+    (over && policy ? ' · OVER ' + usd(policy.max_open_risk_usd) + ' CAP' : '');
+
+  const policyState = document.querySelector('#policyState');
+  if (!policy) {
+    policyState.textContent = 'Policy unavailable';
+    policyState.className = 'pill policywarn';
+    return;
+  }
+  const mode = String(policy.mode || 'standard').toUpperCase();
+  policyState.textContent = mode + ' · ' + usd(policy.max_single_trade_usd) + ' MAX';
+  policyState.className = 'pill ' + (over ? 'policywarn' : 'policyok');
+  policyState.title = 'Daily cap ' + usd(policy.daily_hard_cap_usd) +
+    ' · open-risk cap ' + usd(policy.max_open_risk_usd) +
+    ' · loss stop ' + usd(policy.daily_loss_stop_usd) +
+    ' · minimum opportunity ' + Number(policy.min_opportunity_score || 0).toFixed(2);
+}
+
 async function loadSession(){
   try {
     const res = await fetch('/api/session/status', {cache:'no-store'});
@@ -315,7 +350,6 @@ async function loadSession(){
     document.querySelector('#lastCycle').textContent = latest ? 'Last cycle ' + ageText(latest.completed_at || latest.started_at) + ' · ' + (latest.candidates_seen || 0) + ' candidates' : 'No cycle yet today';
     document.querySelector('#nextWake').textContent = 'Next scheduled wake ~' + nextQuarterHour().toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});
     document.querySelector('#queueSummary').textContent = (today.calls || 0) + ' CALL · ' + (today.puts || 0) + ' PUT · ' + (today.passes || 0) + ' PASS · ' + (today.paper_fills || 0) + ' fills today';
-    document.querySelector('#riskSummary').textContent = 'Paper deployed ' + usd(today.deployed_usd || 0) + ' · open risk ' + usd(today.open_risk_usd || 0);
     const queue = document.querySelector('#tradeQueue');
     const candidates = session.latest_cycle_diagnostics && Array.isArray(session.latest_cycle_diagnostics.closest_to_underlying_gate) ? session.latest_cycle_diagnostics.closest_to_underlying_gate : [];
     queue.innerHTML = candidates.length ? candidates.slice(0,6).map(renderCandidate).join('') : '<div class="empty">No candidates in the latest cycle yet.</div>';
@@ -351,6 +385,7 @@ async function loadCore(){
   const warning = document.querySelector('#warning');
   const warnings = Array.isArray(proof.warnings) ? proof.warnings : [];
   warning.textContent = warnings.length ? warnings.join(' ') : 'Minimum sample warnings cleared. This still does not guarantee future profitability.';
+  renderPolicyAndRisk(portfolio);
   renderPortfolio(portfolio);
   const rows = document.querySelector('#rows');
   if (!opp.length) { rows.innerHTML = '<tr><td colspan="8">No predictions yet.</td></tr>'; return; }
