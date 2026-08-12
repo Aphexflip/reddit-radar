@@ -18,18 +18,26 @@ function env(mode = "alpaca_paper"): AlpacaPaperEnv {
   } as unknown as AlpacaPaperEnv;
 }
 
+function brokerModeInput(mode?: string): Parameters<typeof resolveBrokerMode>[0] {
+  // Wrangler narrows deployed BROKER_MODE to the exact configured literal. This
+  // cast intentionally exercises resolveBrokerMode's runtime fail-closed guard
+  // against absent/invalid configuration values that can still occur outside
+  // generated production bindings.
+  return (mode === undefined ? {} : { BROKER_MODE: mode }) as unknown as Parameters<typeof resolveBrokerMode>[0];
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
 describe("paper broker mode", () => {
   it("defaults deterministic tests to local_sim", () => {
-    expect(resolveBrokerMode({})).toBe("local_sim");
+    expect(resolveBrokerMode(brokerModeInput())).toBe("local_sim");
   });
 
   it("accepts alpaca_paper and rejects any other broker mode", () => {
-    expect(resolveBrokerMode({ BROKER_MODE: "alpaca_paper" })).toBe("alpaca_paper");
-    expect(() => resolveBrokerMode({ BROKER_MODE: "live" })).toThrow(/Unsupported BROKER_MODE/);
+    expect(resolveBrokerMode(brokerModeInput("alpaca_paper"))).toBe("alpaca_paper");
+    expect(() => resolveBrokerMode(brokerModeInput("live"))).toThrow(/Unsupported BROKER_MODE/);
   });
 
   it("builds stable idempotency keys under Alpaca's 128 character limit", () => {
