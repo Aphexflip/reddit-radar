@@ -1,277 +1,117 @@
-# Reddit Radar / Pulse Markets — Options Intelligence
+# Radar — U.S. Equities & Options Intelligence
 
-Internal-first market-intelligence system for discovering, challenging, paper-trading, and measuring bullish/bearish U.S. equity options opportunities.
+Radar is an internal-first autonomous market-intelligence system for discovering, challenging, paper-executing and measuring bullish/bearish U.S. equity options opportunities.
 
-## Status
+> **Agent/session recovery:** read [`CHATGPT_START_HERE.md`](CHATGPT_START_HERE.md) before making substantive changes. The repository, not chat memory, is the project source of truth.
 
-**v0.1 is autonomous paper research only. Live trading is intentionally disabled.**
+## Current status
 
-The working loop is now:
+As of 2026-08-12:
+
+- system version: **0.3.0**
+- execution mode: **paper**
+- broker mode: **Alpaca PAPER**
+- live-money execution: **disabled**
+- canonical development/deployment branch: `agent/v01-options-intelligence-foundation`
+- repository default `main`: legacy/stale; do not infer current Radar state from it
+- deployed at `radar.rsymo.com`
+
+The current loop is:
 
 ```text
-Pulse Markets trend feed / SEC / direct events
-  -> raw evidence + provenance
-  -> normalized timestamped signals
-  -> entity / relationship graph
-  -> deterministic evidence score
-  -> fresh Alpaca stock + option snapshots
+cross-source evidence
+  -> provenance + normalized signals
+  -> entity / economic relationship graph
+  -> evidence scoring
+  -> fresh market/options evidence
   -> CALL / PUT / PASS
-  -> option liquidity / spread / DTE gate
+  -> adversarial bull/bear/skeptic/judge record
+  -> quality-gated research contract
+  -> budget-aware executable contract
   -> immutable hash-linked prediction
-  -> tiered paper execution
-  -> scheduled outcome checkpoints
-  -> autonomous historical outcome collection
-  -> evidence-quality-aware proof dashboard
+  -> Alpaca PAPER order / broker reconciliation
+  -> strategy-horizon broker-paper close
+  -> outcome measurement + learning
 ```
 
-The goal is not to produce convincing stock commentary. The goal is to create falsifiable predictions and accumulate enough **forward** outcomes to determine whether any measurable edge survives realistic friction.
+## Product boundary
 
-## Non-negotiable rule
+Radar is **not** Pulse.
 
-**Evidence -> thesis -> adversarial challenge -> option -> immutable prediction -> outcome -> learning.**
+- `pulse.rsymo.com`: Reddit-native live comments, attention, sentiment and trend intelligence.
+- `radar.rsymo.com`: cross-source market intelligence and options decision/execution research.
 
-Never start with a trade and search backward for reasons to justify it.
+**Radar reads Pulse; Radar does not write to or control Pulse.**
 
-## Initial paper risk policy
+Reddit is one independent sensor, not Radar's core architecture.
 
-- normal deployment target: **$50/day**
-- hard autonomous cap: **$100/day**
-- maximum autonomous single-trade debit: **$100**
+## Scientific rule
+
+**Evidence -> thesis -> adversarial challenge -> option -> timestamped prediction -> observed outcome -> learning.**
+
+Never start with a trade and search backward for reasons to justify it. Published predictions are immutable.
+
+## Current paper execution
+
+Eligible strategy trades route through Alpaca PAPER rather than a synthetic fill ledger.
+
+Radar currently supports:
+
+- Alpaca PAPER account/options-access preflight on deployment
+- DAY limit buys for qualified long-option entries
+- deterministic client order IDs
+- accepted/pending/filled/rejected/canceled/expired reconciliation
+- actual paper broker fill persistence
+- strategy-horizon closes through Alpaca PAPER
+- `local_sim` retained for deterministic/system tests
+
+Historical option references remain separate from broker-paper execution results.
+
+## Current normal risk policy
+
+- daily target: **$50**
+- daily hard cap: **$100**
+- max single-trade debit: **$100**
+- max open strategy debit risk: **$200**
 - daily realized-loss stop: **$40**
-- normal opportunity threshold: **0.60**
-- exceptional `$50-$100` tier threshold: **0.75**
-- above `$100/day` or above the single-trade cap: **requires escalation**
-- 0DTE: disabled
-- live execution: disabled
-- wide-spread / low-volume / low-OI contracts: rejected
-- budget does not alter research ranking; a high-quality contract can be surfaced for escalation instead of being replaced by a worse cheap contract
+- minimum opportunity score: **0.60**
+- exceptional tier: **0.75**
+- absolute direction gate: **0.20**
+- max spread: **25%**
+- minimum open interest: **25**
+- minimum volume: **5**
+- minimum DTE: **7**
+- 0DTE: **disabled**
+- live execution: **disabled**
 
-The paper executor uses the option **ask** as its conservative simulated entry. Current automatic exits use historical one-minute option trade-bar closes and are explicitly marked as **paper references, not broker-fill evidence**.
+Do not loosen gates merely to create trades. Intentional policy changes require evidence, versioning, decision-log updates and corresponding invariant-test changes.
 
-## Data/evidence classes
+## Canonical project documents
 
-The proof layer keeps these separate:
+Read in this order for substantial work:
 
-1. **Option-reference outcomes** — historical one-minute option trade-bar references. Useful for research, not proof of executable returns.
-2. **Forward paper P&L** — autonomous paper entries/exits under the configured risk policy. Better evidence, but still not live fills.
-3. **Execution-grade outcomes** — reserved for bid/ask-aware or actual broker-fill evidence when that layer is added.
+1. [`CHATGPT_START_HERE.md`](CHATGPT_START_HERE.md)
+2. [`docs/CURRENT_CHECKPOINT.md`](docs/CURRENT_CHECKPOINT.md)
+3. [`docs/PRODUCT_CONTRACT.md`](docs/PRODUCT_CONTRACT.md)
+4. [`docs/ROADMAP.md`](docs/ROADMAP.md)
+5. [`docs/DECISION_LOG.md`](docs/DECISION_LOG.md)
+6. relevant architecture/tuning docs
 
-A single blended `win rate` is deliberately avoided.
+Machine-readable current phase/goals live in [`project-state.json`](project-state.json).
 
-## Current adapters
+Agent operating rules live in [`AGENTS.md`](AGENTS.md).
 
-### Pulse Markets / Reddit Pulse
+## Current next build
 
-The options engine consumes the proven Pulse Markets backend read-only:
+**Execution + market-state observability.**
 
-```text
-https://redditpulse-v0.aphexflip.workers.dev/api/trends
-```
+The next milestone should make market session, stale-data state, broker readiness, pending/rejected orders, reconciliation freshness, broker/ledger mismatches and active risk blocks immediately visible without changing strategy thresholds.
 
-`POST /api/pulse/sync` converts aggregate stock trends into versioned signals. Sentiment level/shift may vote directionally; mention velocity, growth, subreddit spread, and engagement are non-directional context. These are heuristic features until the outcome ledger proves incremental predictive value.
+At the same time, let strategy-qualified Alpaca PAPER trades accumulate naturally. Do not manufacture trades for sample size.
 
-### SEC EDGAR
+After that, resume Track B historical backfill and leakage-safe walk-forward/calibration work. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
-`POST /api/sec/poll` fetches recent company submissions. Filing/form/item detection is recorded as **neutral evidence**. A filing existing does not automatically mean bullish or bearish.
-
-A declared `SEC_USER_AGENT` is required before polling.
-
-### Alpaca development market/options adapter
-
-`POST /api/alpaca/predict` refreshes the underlying, requests only the needed call or put side when evidence clears threshold, normalizes option contracts/snapshots, freezes the prediction, and schedules outcome checkpoints automatically.
-
-Defaults:
-
-- equities feed: `iex`
-- options feed: `indicative`
-
-The free/indicative options feed is **paper-research only**. The system reports whether the configured data combination is considered execution-grade; current defaults are not.
-
-### Relationship graph
-
-`POST /api/graph/relationship` creates provenance-backed typed relationships such as supplier/customer/product/competitor/regulatory exposure.
-
-`POST /api/graph/expand` traverses up to three hops and surfaces connected tradable tickers. A graph connection nominates a candidate for investigation; it **never implies direction by itself**.
-
-## Autonomous paper cycle
-
-```http
-POST /api/run/paper-cycle
-Authorization: Bearer <WRITE_TOKEN>
-Content-Type: application/json
-```
-
-Typical body:
-
-```json
-{
-  "pulse_hours": 1,
-  "trend_limit": 25,
-  "candidate_limit": 10,
-  "prediction_horizon_minutes": 1440,
-  "signal_lookback_hours": 6
-}
-```
-
-The cycle:
-
-1. syncs top stock trends from Pulse Markets,
-2. ranks candidate attention by Pulse score,
-3. refreshes market/options data sequentially to stay provider-friendly,
-4. freezes CALL / PUT / PASS predictions,
-5. paper-executes only eligible CALL/PUT setups,
-6. enforces normal vs exceptional budget tiers,
-7. persists every candidate, prediction, fill/block/escalation, and error.
-
-## Automated truth loop
-
-Every Alpaca-backed prediction schedules:
-
-- `30m_elapsed`
-- `24h_elapsed`
-- `72h_elapsed`
-- `120h_elapsed`
-- `predicted_elapsed`
-
-Collect due checkpoints with:
-
-```http
-POST /api/outcomes/collect
-Authorization: Bearer <WRITE_TOKEN>
-Content-Type: application/json
-
-{"limit":20}
-```
-
-The collector requests time-aligned historical stock/option bars and chooses the first available market bar at or after the target timestamp. This naturally rolls weekend/market-closure targets to the next available trading bar while preserving the original target timestamp and measured lag.
-
-At `predicted_elapsed`, an open paper position is closed using the same historical option trade-bar reference, and the resulting paper P&L is fed into the daily realized-loss state so the loss kill switch has real feedback.
-
-## Cloudflare resources
-
-The Worker expects:
-
-- D1 binding: `DB`
-- R2 binding: `EVIDENCE`
-
-`wrangler.jsonc` still contains a placeholder D1 database ID. The project is **not remotely deployed yet**.
-
-Create resources:
-
-```bash
-npm install
-npx wrangler d1 create reddit-radar-options-intelligence
-npx wrangler r2 bucket create reddit-radar-evidence
-```
-
-Copy the real D1 database ID into `wrangler.jsonc`.
-
-Apply migrations locally:
-
-```bash
-npm run db:local
-```
-
-Apply remotely after the real resource exists:
-
-```bash
-npx wrangler d1 migrations apply reddit-radar-options-intelligence --remote
-```
-
-## Secrets and runtime configuration
-
-All write endpoints fail closed unless `WRITE_TOKEN` is configured.
-
-Local setup:
-
-```bash
-cp .dev.vars.example .dev.vars
-```
-
-Required/optional runtime values:
-
-```text
-WRITE_TOKEN=<long random secret>
-SEC_USER_AGENT=<app/org plus monitored contact>
-ALPACA_API_KEY_ID=<paper/data key>
-ALPACA_API_SECRET_KEY=<paper/data secret>
-ALPACA_STOCK_FEED=iex
-ALPACA_OPTION_FEED=indicative
-PULSE_API_ORIGIN=https://redditpulse-v0.aphexflip.workers.dev   # optional override
-PULSE_API_TOKEN=<optional if Pulse backend becomes protected>
-```
-
-Never commit real credentials.
-
-Remote Worker secrets should be set through Wrangler/Cloudflare secret management, for example:
-
-```bash
-npx wrangler secret put WRITE_TOKEN
-npx wrangler secret put ALPACA_API_KEY_ID
-npx wrangler secret put ALPACA_API_SECRET_KEY
-npx wrangler secret put SEC_USER_AGENT
-```
-
-## Run locally
-
-```bash
-npm install
-npm run db:local
-npm run dev
-```
-
-Open the local Worker URL for the proof dashboard.
-
-## API map
-
-Read:
-
-```text
-GET  /api/health
-GET  /api/opportunities
-GET  /api/proof
-```
-
-Protected writes:
-
-```text
-POST /api/events
-POST /api/pulse/sync
-POST /api/sec/poll
-POST /api/graph/relationship
-POST /api/graph/expand
-POST /api/alpaca/predict
-POST /api/run/paper-cycle
-POST /api/predictions
-POST /api/paper/execute/:predictionId
-POST /api/outcomes/collect
-POST /api/outcomes
-```
-
-All protected writes require:
-
-```text
-Authorization: Bearer <WRITE_TOKEN>
-```
-
-## Prediction behavior
-
-The engine:
-
-1. loads only evidence available before prediction time,
-2. keeps neutral/context evidence out of the directional voting denominator,
-3. scores the underlying opportunity separately from the option expression,
-4. requests CALL or PUT candidates only after evidence clears threshold,
-5. rejects poor spread/liquidity/DTE contracts,
-6. returns `PASS` rather than forcing a bad option,
-7. stores an immutable content hash linked to the prior prediction hash,
-8. schedules its own future truth checkpoints.
-
-`estimated_ev_score` is currently a **ranking score**, not a calibrated dollar expected-value claim. It must earn calibration from the forward outcome dataset.
-
-## Validation
-
-GitHub Actions validates every branch/PR push by running:
+## Development
 
 ```bash
 npm install
@@ -281,21 +121,21 @@ npm run typecheck
 npm run deploy:dry
 ```
 
-Do not merge solely because the dashboard looks correct. All migrations, unit tests, generated Cloudflare types, TypeScript, and Wrangler dry-run must pass.
+Every meaningful change should keep CI green. Critical current-phase boundaries are enforced by `test/architecture-invariants.test.ts`.
 
-## Next major build targets
+## Runtime resources
 
-1. deploy this Worker with real D1/R2 resources and secrets,
-2. run autonomous paper cycles continuously enough to create a forward sample,
-3. add trading-session-aware outcome labels in addition to elapsed-time labels,
-4. parse economically directional facts from SEC filings instead of treating filing presence as direction,
-5. populate/learn the supplier/customer/product/competitor relationship graph,
-6. add additional independent news/catalyst sources,
-7. calibrate scoring components only after sufficient forward outcomes exist,
-8. add Robinhood Agentic as the first live broker adapter only after paper/shadow reliability and execution-grade data thresholds are met.
+The Cloudflare Worker uses:
 
-## Live-trading boundary
+- Radar D1: `DB`
+- read-only Pulse D1: `PULSE_DB`
+- evidence R2: `EVIDENCE`
+- scheduled maintenance: every 5 minutes during configured market hours
 
-There is currently **no live broker adapter enabled** and `EXECUTION_MODE=paper`.
+Real credentials belong in secret management only; never commit them.
 
-That boundary stays in place until the prediction engine, execution engine, and outcome accounting each demonstrate reliable behavior independently. Profitability is not assumed or promised.
+## Proof standard
+
+The goal is not compelling stock commentary or lots of trades. The goal is trustworthy evidence of whether Radar has durable edge after realistic friction.
+
+A system test, tiny sample or lucky trade is not proof of profitability.
